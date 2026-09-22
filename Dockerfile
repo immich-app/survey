@@ -4,35 +4,32 @@ ENV COREPACK_ENABLE_STRICT=1
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/survey.immich.app/package.json apps/survey.immich.app/
-COPY apps/survey.immich.app/backend/package.json apps/survey.immich.app/backend/
-COPY common/ common/
-RUN pnpm install --frozen-lockfile --filter survey.immich.app...
-COPY apps/survey.immich.app/ apps/survey.immich.app/
-RUN cd apps/survey.immich.app && pnpm run build
+COPY backend/package.json backend/
+RUN pnpm install --frozen-lockfile --ignore-scripts --filter survey...
+COPY . .
+RUN pnpm run build:frontend
 
 FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS backend-builder
 ENV COREPACK_ENABLE_STRICT=1
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/survey.immich.app/package.json apps/survey.immich.app/
-COPY apps/survey.immich.app/backend/package.json apps/survey.immich.app/backend/
+COPY backend/package.json backend/
 RUN pnpm install --frozen-lockfile --filter survey-backend...
-COPY apps/survey.immich.app/shared/ apps/survey.immich.app/shared/
-COPY apps/survey.immich.app/backend/ apps/survey.immich.app/backend/
-RUN cd apps/survey.immich.app/backend && pnpm run build:node
+COPY shared/ shared/
+COPY backend/ backend/
+RUN cd backend && pnpm run build:node
 
 FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
 ENV COREPACK_ENABLE_STRICT=1
 RUN corepack enable
 WORKDIR /app
 
-COPY --from=frontend-builder /app/apps/survey.immich.app/build /app/public
+COPY --from=frontend-builder /app/build /app/public
 
-COPY --from=backend-builder /app/apps/survey.immich.app/backend/dist /app/dist
-COPY --from=backend-builder /app/apps/survey.immich.app/backend/migrations /app/migrations
-COPY --from=backend-builder /app/apps/survey.immich.app/backend/package.json /app/
+COPY --from=backend-builder /app/backend/dist /app/dist
+COPY --from=backend-builder /app/backend/migrations /app/migrations
+COPY --from=backend-builder /app/backend/package.json /app/
 RUN pnpm install --prod
 
 ENV PORT=3000

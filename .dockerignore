@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+build
+dist
+backend/dist
+.svelte-kit
+backend/.wrangler
+deployment
+e2e
+test-results
+playwright-report
+dogfood-output
+.git

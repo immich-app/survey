@@ -13,9 +13,6 @@ export default [
   ...svelte.configs.prettier,
   {
     languageOptions: {
-      // See the matching note in the root eslint.config.ts: typescript-eslint
-      // cannot infer a tsconfigRootDir when two flat configs are loaded in one
-      // process, so each one pins its own.
       parserOptions: {
         tsconfigRootDir: import.meta.dirname,
       },
@@ -47,6 +44,6 @@ export default [
     },
   },
   {
-    ignores: ['build/', '.svelte-kit/', 'dist/', 'backend/dist/', 'backend/.wrangler/', 'backend/.svelte-kit/'],
+    ignores: ['build/', '.svelte-kit/', 'dist/', 'backend/dist/', 'backend/.wrangler/', 'deployment/', 'theme/'],
   },
 ];

@@ -1,0 +1,75 @@
+name: Destroy
+on:
+  # zizmor: ignore[dangerous-triggers]
+  # pull_request_target is deliberate: it runs the base branch's teardown logic
+  # (not the closing PR's, which may be stale) and never checks out or executes
+  # untrusted PR code, so it is safe here.
+  pull_request_target:
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number to tear down (stage pr-<number>)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}/.mise/config.toml
+
+jobs:
+  destroy:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: ['dev', 'prod']
+    env:
+      ENVIRONMENT: ${{ matrix.environment }}
+      TF_VAR_app_name: survey
+      TF_VAR_stage: pr-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.number }}
+      TF_VAR_dist_dir: ${{ github.workspace }}/backend/dist
+      TF_VAR_migrations_dir: ${{ github.workspace }}/backend/migrations
+      OP_SERVICE_ACCOUNT_TOKEN: ${{ matrix.environment == 'prod' && secrets.OP_TF_PROD_ENV || secrets.OP_TF_DEV_ENV }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+
+      - id: token
+        uses: immich-app/devtools/actions/create-workflow-token@df46d635b905e618b88fc4c95baa920aeb30b309 # create-workflow-token-action-v3.0.1
+        with:
+          client-id: ${{ secrets.PUSH_O_MATIC_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PUSH_O_MATIC_APP_KEY }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Setup Mise
+        uses: immich-app/devtools/actions/use-mise@06a9ef925332c91be647d6256642b86b398592c8 # use-mise-action-v3.2.1
+        with:
+          github_token: ${{ steps.token.outputs.token }}
+
+      - name: Install 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+
+      # Mirror the deploy step in build.yml. The shared Cloudflare Pages project
+      # (pages-project) is intentionally left in place so it survives across PRs.
+      - name: Destroy All
+        working-directory: ${{ github.workspace }}/deployment
+        run: |
+          op run --env-file='.env' -- terragrunt run --all destroy \
+            --non-interactive \
+            --parallelism 1 \
+            --queue-include-dir='modules/cloudflare/static-pages' \
+            --queue-include-dir='modules/cloudflare/workers/survey' \
+            -- -refresh=false -lock-timeout=5m
+
+      - name: Comment
+        if: ${{ github.event_name == 'pull_request_target' }}
+        uses: immich-app/devtools/actions/sticky-comment@0135acd12ad9f3369b94a2aa3c0ae8c835a4e926 # sticky-comment-action-v1.0.0
+        with:
+          id: preview-urls
+          token: ${{ steps.token.outputs.token }}
+          delete: true

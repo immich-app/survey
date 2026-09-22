@@ -1,0 +1,58 @@
+[tools]
+opentofu = "1.12.6"
+terragrunt = "1.1.4"
+node = "24.20.0"
+pnpm = "11.24.0"
+wrangler = "4.127.0"
+
+[tasks.deploy]
+run = "wrangler pages deploy ${BUILD_DIR} --project-name=${PROJECT_NAME} --branch=${BRANCH_NAME}"
+
+[tasks.tg]
+run = "op run '--env-file={{config_root}}/deployment/.env' -- terragrunt"
+description = "Wrapper for terragrunt"
+dir = "{{cwd}}"
+
+[tasks."tg:fmt"]
+run = "mise run tg hcl format"
+description = "Format terragrunt files"
+
+[tasks.tf]
+run = "mise run tg run --all"
+description = "Wrapper for terragrunt run-all"
+dir = "{{cwd}}"
+
+[tasks."tf:fmt"]
+run = "tofu fmt -recursive deployment/"
+description = "Format terraform files"
+
+[tasks."tf:init"]
+run = "mise run tf init -- -reconfigure"
+dir = "{{cwd}}"
+
+[tasks."tf:plan"]
+run = "mise run tf plan"
+dir = "{{cwd}}"
+
+[tasks."tf:apply"]
+run = "mise run tf apply"
+dir = "{{cwd}}"
+
+[tasks."tf:destroy"]
+run = "mise run tf destroy"
+dir = "{{cwd}}"
+
+[tasks.dev]
+description = "Run the frontend and backend dev servers"
+depends = ["dev:backend", "dev:frontend"]
+
+[tasks."dev:frontend"]
+run = "pnpm dev"
+
+[tasks."dev:backend"]
+dir = "{{config_root}}/backend"
+run = "wrangler dev --config wrangler-dev.jsonc --port 8787"
+
+[settings]
+experimental = true
+idiomatic_version_file_enable_tools = []

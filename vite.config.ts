@@ -11,7 +11,7 @@ export default defineConfig({
     fs: {
       // Without ./shared here Vite 403s the $shared imports and every
       // respondent page renders a 500.
-      allow: ['../../common', './shared'],
+      allow: ['./shared', './theme'],
     },
     proxy: {
       '/api': {

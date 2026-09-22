@@ -3,7 +3,7 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 import dotenv from 'dotenv';
 import { resolve } from 'node:path';
 
-dotenv.config({ path: '../../.env' });
+dotenv.config({ path: './.env' });
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
@@ -11,10 +11,10 @@ const config = {
   kit: {
     adapter: adapter({ fallback: 'index.html' }),
     alias: {
-      $common: '../../common',
-      '$common/*': '../../common/*',
       $shared: './shared',
       '$shared/*': './shared/*',
+      $theme: './theme',
+      '$theme/*': './theme/*',
       '@immich/ui': resolve('./node_modules/@immich/ui/dist'),
       '@mdi/js': resolve('./node_modules/@mdi/js'),
     },

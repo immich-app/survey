@@ -1,0 +1,9 @@
+# Package Managers
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+dist/
+build/
+.svelte-kit/
+backend/worker-configuration.d.ts
+theme/fonts/

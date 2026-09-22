@@ -1,13 +1,13 @@
 locals {
   account_id = data.terraform_remote_state.cloudflare_account.outputs.cloudflare_account_id
-  ui_prod = var.app_name == "ui" && var.env == "prod"
+  ui_prod    = var.app_name == "ui" && var.env == "prod"
 }
 
 module "static_pages" {
   source = "git::https://github.com/immich-app/devtools.git//tf/shared/modules/cloudflare-pages?ref=main"
 
-  cloudflare_api_token          = data.terraform_remote_state.api_keys_state.outputs.terraform_key_cloudflare_docs
-  cloudflare_account_id         = local.account_id
+  cloudflare_api_token  = data.terraform_remote_state.api_keys_state.outputs.terraform_key_cloudflare_docs
+  cloudflare_account_id = local.account_id
 
   pages_project = data.terraform_remote_state.cloudflare_pages_project.outputs.pages_project
 
