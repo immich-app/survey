@@ -1,4 +1,4 @@
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS frontend-builder
+FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS frontend-builder
 # pnpm version is pinned via the root package.json "packageManager" field
 ENV COREPACK_ENABLE_STRICT=1
 RUN corepack enable
@@ -9,7 +9,7 @@ RUN pnpm install --frozen-lockfile --ignore-scripts --filter survey...
 COPY . .
 RUN pnpm run build:frontend
 
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS backend-builder
+FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553 AS backend-builder
 ENV COREPACK_ENABLE_STRICT=1
 RUN corepack enable
 WORKDIR /app
@@ -20,7 +20,7 @@ COPY shared/ shared/
 COPY backend/ backend/
 RUN cd backend && pnpm run build:node
 
-FROM node:24-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e
+FROM node:24-slim@sha256:2fe369e969550cde8e867afc3fe370b260140cab4a23d467074295b42163d553
 ENV COREPACK_ENABLE_STRICT=1
 RUN corepack enable
 WORKDIR /app
