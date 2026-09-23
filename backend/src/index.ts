@@ -484,7 +484,7 @@ export default {
 
     // These responses carry credentialed data (session, rid, spw_ cookies), so
     // reflecting an arbitrary Origin alongside Allow-Credentials (CWE-942) would
-    // let any origin — including a sibling *.immich.app — read them.
+    // let any origin — including a sibling subdomain — read them.
     securityHeaders(response);
     const corsOrigin = allowedCredentialedOrigin(request, config);
     if (corsOrigin) {

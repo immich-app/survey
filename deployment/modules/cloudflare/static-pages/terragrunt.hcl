@@ -21,7 +21,7 @@ remote_state {
 
   config = {
     conn_str    = get_env("TF_VAR_tf_state_postgres_conn_str")
-    schema_name = "cloudflare_immich_app_${local.app_name}_${local.env}${local.stage}"
+    schema_name = "cloudflare_futo_org_${local.app_name}_${local.env}${local.stage}"
   }
 }
 

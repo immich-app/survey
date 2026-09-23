@@ -101,7 +101,7 @@ locals {
 # --- Durable Object worker (deploys first) ---
 
 resource "cloudflare_worker" "sessions" {
-  account_id = var.cloudflare_account_id
+  account_id = local.account_id
   name       = "survey-sessions${local.resource_suffix}"
 
   observability = {
@@ -117,7 +117,7 @@ resource "cloudflare_worker" "sessions" {
 # and is frozen once created, so each new environment bootstraps itself and the
 # rolling version below stays on the no-op tag forever after.
 resource "cloudflare_worker_version" "sessions_bootstrap" {
-  account_id         = var.cloudflare_account_id
+  account_id         = local.account_id
   worker_id          = cloudflare_worker.sessions.id
   compatibility_date = "2025-06-03"
 
@@ -140,7 +140,7 @@ resource "cloudflare_worker_version" "sessions_bootstrap" {
 }
 
 resource "cloudflare_workers_deployment" "sessions_bootstrap" {
-  account_id  = var.cloudflare_account_id
+  account_id  = local.account_id
   script_name = cloudflare_worker.sessions.name
   strategy    = "percentage"
 
@@ -155,7 +155,7 @@ resource "cloudflare_workers_deployment" "sessions_bootstrap" {
 }
 
 resource "cloudflare_worker_version" "sessions" {
-  account_id         = var.cloudflare_account_id
+  account_id         = local.account_id
   worker_id          = cloudflare_worker.sessions.id
   compatibility_date = "2025-06-03"
 
@@ -176,7 +176,7 @@ resource "cloudflare_worker_version" "sessions" {
 }
 
 resource "cloudflare_workers_deployment" "sessions" {
-  account_id  = var.cloudflare_account_id
+  account_id  = local.account_id
   script_name = cloudflare_worker.sessions.name
   strategy    = "percentage"
 
@@ -193,7 +193,7 @@ resource "cloudflare_workers_deployment" "sessions" {
 }
 
 resource "cloudflare_worker" "api" {
-  account_id = var.cloudflare_account_id
+  account_id = local.account_id
   name       = "survey-api${local.resource_suffix}"
 
   observability = {
@@ -207,7 +207,7 @@ resource "cloudflare_worker" "api" {
 }
 
 resource "cloudflare_worker_version" "api" {
-  account_id         = var.cloudflare_account_id
+  account_id         = local.account_id
   worker_id          = cloudflare_worker.api.id
   compatibility_date = "2025-06-03"
 
@@ -225,7 +225,7 @@ resource "cloudflare_worker_version" "api" {
 }
 
 resource "cloudflare_workers_deployment" "api" {
-  account_id  = var.cloudflare_account_id
+  account_id  = local.account_id
   script_name = cloudflare_worker.api.name
   strategy    = "percentage"
 
@@ -235,17 +235,17 @@ resource "cloudflare_workers_deployment" "api" {
   }]
 }
 
-data "cloudflare_zone" "immich_app" {
+data "cloudflare_zone" "futo_org" {
   filter = {
-    account_id = var.cloudflare_account_id
-    name       = "immich.app"
+    account_id = local.account_id
+    name       = "futo.org"
   }
 }
 
 # A Worker with no deployed version does not exist as far as the routes API is
 # concerned, and referencing only the name would let these race the deployment.
 resource "cloudflare_workers_route" "survey_api_root" {
-  zone_id = data.cloudflare_zone.immich_app.zone_id
+  zone_id = data.cloudflare_zone.futo_org.zone_id
   pattern = "${module.domain.fqdn}/api"
   script  = cloudflare_worker.api.name
 
@@ -253,7 +253,7 @@ resource "cloudflare_workers_route" "survey_api_root" {
 }
 
 resource "cloudflare_workers_route" "survey_api_wildcard" {
-  zone_id = data.cloudflare_zone.immich_app.zone_id
+  zone_id = data.cloudflare_zone.futo_org.zone_id
   pattern = "${module.domain.fqdn}/api/*"
   script  = cloudflare_worker.api.name
 
@@ -266,4 +266,5 @@ module "domain" {
   app_name = var.app_name
   stage    = var.stage
   env      = var.env
+  domain   = "futo.org"
 }

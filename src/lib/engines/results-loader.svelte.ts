@@ -69,7 +69,7 @@ export function createResultsLoader(surveyId: string) {
     respondentCounts.total > 0 ? Math.round((respondentCounts.completed / respondentCounts.total) * 100) : 0,
   );
 
-  const surveyUrl = $derived(survey?.slug ? `https://survey.immich.app/s/${survey.slug}` : '');
+  const surveyUrl = $derived(survey?.slug ? `${window.location.origin}/s/${survey.slug}` : '');
 
   function getQuestionResult(questionId: string) {
     return results.find((r) => r.questionId === questionId);
