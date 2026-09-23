@@ -109,7 +109,8 @@ jobs:
             --parallelism 1 \
             --queue-include-dir='modules/cloudflare/pages-project' \
             --queue-include-dir='modules/cloudflare/static-pages' \
-            --queue-include-dir='modules/cloudflare/workers/survey'
+            --queue-include-dir='modules/cloudflare/workers/survey' \
+            -- -lock-timeout=5m
 
       - name: Cloudflare Deploy Output
         id: deploy-output
