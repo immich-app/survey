@@ -231,7 +231,7 @@ importers:
         specifier: ^3.0.11
         version: 3.0.12
       '@types/node':
-        specifier: ^26.4.0
+        specifier: ^26.6.1
         version: 26.6.2
       '@types/oidc-provider':
         specifier: ^9.11.1
