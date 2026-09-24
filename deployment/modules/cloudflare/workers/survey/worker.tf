@@ -257,7 +257,7 @@ resource "cloudflare_workers_route" "survey_api_wildcard" {
 module "domain" {
   source = "git::https://github.com/immich-app/devtools.git//tf/shared/modules/domain?ref=main"
 
-  app_name = var.app_name
+  app_name = var.subdomain
   stage    = var.stage
   env      = var.env
   domain   = "futo.org"

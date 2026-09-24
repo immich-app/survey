@@ -6,7 +6,7 @@ module "static_pages" {
 
   pages_project = data.terraform_remote_state.cloudflare_pages_project.outputs.pages_project
 
-  app_name = var.app_name
+  app_name = var.subdomain
   stage    = var.stage
   env      = var.env
   domain   = "futo.org"
