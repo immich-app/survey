@@ -73,10 +73,12 @@
         </div>
       {/if}
 
-      <Button variant="outline" onclick={() => oidcLogin(window.location.pathname)}>
-        <Icon icon={mdiOpenInNew} size="16" />
-        Sign in with SSO
-      </Button>
+      <div class={passwordEnabled ? undefined : 'flex justify-center'}>
+        <Button variant="outline" onclick={() => oidcLogin(window.location.pathname)}>
+          <Icon icon={mdiOpenInNew} size="16" />
+          Sign in with SSO
+        </Button>
+      </div>
     {/if}
 
     {#if !passwordEnabled && !oidcEnabled}
