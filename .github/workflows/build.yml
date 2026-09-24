@@ -120,8 +120,8 @@ jobs:
 
       - name: Publish Frontend to Cloudflare Pages
         env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN_PAGES_UPLOAD }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.FUTO_CLOUDFLARE_API_TOKEN_PAGES_UPLOAD }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.FUTO_CLOUDFLARE_ACCOUNT_ID }}
           BUILD_DIR: build
           PROJECT_NAME: ${{ fromJson(steps.deploy-output.outputs.output).pages_project_name.value }}
           BRANCH_NAME: ${{ fromJson(steps.deploy-output.outputs.output).pages_branch.value }}
@@ -130,7 +130,7 @@ jobs:
       - name: Comment preview URL
         if: ${{ github.event_name == 'pull_request' }}
         env:
-          SUBDOMAIN: ${{ fromJson(steps.deploy-output.outputs.output).immich_subdomain.value }}
+          SUBDOMAIN: ${{ fromJson(steps.deploy-output.outputs.output).subdomain.value }}
           SHA: ${{ github.event.pull_request.head.sha }}
         uses: immich-app/devtools/actions/sticky-comment@0135acd12ad9f3369b94a2aa3c0ae8c835a4e926 # sticky-comment-action-v1.0.0
         with:
@@ -141,4 +141,4 @@ jobs:
 
             | App | Preview URL |
             |-----|-------------|
-            | survey | [${{ fromJson(steps.deploy-output.outputs.output).immich_subdomain.value }}](https://${{ fromJson(steps.deploy-output.outputs.output).immich_subdomain.value }}) |
+            | survey | [${{ fromJson(steps.deploy-output.outputs.output).subdomain.value }}](https://${{ fromJson(steps.deploy-output.outputs.output).subdomain.value }}) |

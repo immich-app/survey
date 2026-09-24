@@ -298,10 +298,10 @@
     }
   }
 
-  const surveyUrl = $derived(survey.slug ? `https://survey.immich.app/s/${survey.slug}` : '');
+  const surveyUrl = $derived(survey.slug ? `${window.location.origin}/s/${survey.slug}` : '');
   const embedCode = $derived(
     survey.slug
-      ? `<iframe src="https://survey.immich.app/embed/${survey.slug}" width="100%" height="600" frameborder="0"></iframe>`
+      ? `<iframe src="${window.location.origin}/embed/${survey.slug}" width="100%" height="600" frameborder="0"></iframe>`
       : '',
   );
 

@@ -1,5 +1,5 @@
 resource "cloudflare_d1_database" "survey" {
-  account_id = var.cloudflare_account_id
+  account_id = local.account_id
   name       = "survey${local.resource_suffix}"
 
   read_replication = {
@@ -25,8 +25,8 @@ resource "null_resource" "d1_migrations" {
       for f in $(ls ${var.migrations_dir}/*.sql | sort); do
         echo "Applying migration: $f"
         response=$(curl -sS -X POST \
-          "https://api.cloudflare.com/client/v4/accounts/${var.cloudflare_account_id}/d1/database/${cloudflare_d1_database.survey.id}/query" \
-          -H "Authorization: Bearer ${data.terraform_remote_state.api_keys_state.outputs.terraform_key_cloudflare_account}" \
+          "https://api.cloudflare.com/client/v4/accounts/${local.account_id}/d1/database/${cloudflare_d1_database.survey.id}/query" \
+          -H "Authorization: Bearer ${local.api_token}" \
           -H "Content-Type: application/json" \
           -d "{\"sql\": $(cat "$f" | jq -Rs .)}")
 

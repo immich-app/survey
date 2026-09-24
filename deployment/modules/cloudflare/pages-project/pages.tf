@@ -1,20 +1,14 @@
 module "pages_project" {
   source = "git::https://github.com/immich-app/devtools.git//tf/shared/modules/cloudflare-pages-project?ref=main"
 
-  cloudflare_api_token  = data.terraform_remote_state.api_keys_state.outputs.terraform_key_cloudflare_docs
-  cloudflare_account_id = data.terraform_remote_state.cloudflare_account.outputs.cloudflare_account_id
+  cloudflare_api_token  = local.api_token
+  cloudflare_account_id = local.account_id
 
   app_name = var.app_name
   env      = var.env
+  domain   = "futo.org"
 }
 
 output "pages_project" {
   value = module.pages_project.pages_project
-}
-
-
-import {
-  for_each = var.app_name == "ui" && var.env == "prod" ? toset(["this"]) : toset([])
-  to       = module.pages_project.cloudflare_pages_project.project
-  id       = "ui-immich-app-prod"
 }
