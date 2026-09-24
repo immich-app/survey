@@ -30,3 +30,11 @@ dependencies {
     "../pages-project",
   ]
 }
+
+errors {
+  retry "pages_domain_already_added" {
+    retryable_errors   = [".*You have already added this custom domain.*"]
+    max_attempts       = 2
+    sleep_interval_sec = 10
+  }
+}
