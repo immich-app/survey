@@ -4,9 +4,10 @@ module "pages_project" {
   cloudflare_api_token  = local.api_token
   cloudflare_account_id = local.account_id
 
-  app_name = var.app_name
-  env      = var.env
-  domain   = "futo.org"
+  app_name           = var.app_name
+  analytics_app_name = var.subdomain
+  env                = var.env
+  domain             = "futo.org"
 }
 
 output "pages_project" {
