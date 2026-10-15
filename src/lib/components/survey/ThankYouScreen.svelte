@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Logo } from '@immich/ui';
+  import FutoLogo from '$lib/components/layout/FutoLogo.svelte';
   import type { Survey } from '$lib/types';
 
   interface Props {
@@ -10,7 +10,7 @@
 </script>
 
 <div class="flex flex-1 flex-col items-center justify-center gap-6 p-6 text-center">
-  <Logo variant="icon" size="giant" />
+  <FutoLogo size="giant" />
 
   <div class="checkmark-container">
     <svg class="checkmark" viewBox="0 0 52 52">
