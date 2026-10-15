@@ -9,7 +9,7 @@ module "static_pages" {
   app_name = var.subdomain
   stage    = var.stage
   env      = var.env
-  domain   = "futo.org"
+  domain   = "futo.tech"
 }
 
 output "pages_branch" {

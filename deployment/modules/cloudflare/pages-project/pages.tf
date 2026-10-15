@@ -6,7 +6,7 @@ module "pages_project" {
 
   app_name = var.app_name
   env      = var.env
-  domain   = "futo.org"
+  domain   = "futo.tech"
 }
 
 output "pages_project" {
