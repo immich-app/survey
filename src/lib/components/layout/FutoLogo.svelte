@@ -25,7 +25,14 @@
     fill="url(#futo-logo-gradient)"
   />
   <defs>
-    <linearGradient id="futo-logo-gradient" x1="0.0392151" y1="0.102484" x2="89.6331" y2="28.1406" gradientUnits="userSpaceOnUse">
+    <linearGradient
+      id="futo-logo-gradient"
+      x1="0.0392151"
+      y1="0.102484"
+      x2="89.6331"
+      y2="28.1406"
+      gradientUnits="userSpaceOnUse"
+    >
       <stop stop-color="#405DB1" />
       <stop offset="0.503553" stop-color="#4F91DC" />
       <stop offset="1" stop-color="#1BACC6" />
