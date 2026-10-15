@@ -18,6 +18,7 @@ export interface SurveysTable {
   randomize_options: number;
   password_hash: string | null;
   archived_at: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }

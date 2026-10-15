@@ -14,6 +14,8 @@ import { getCookie, getRespondentId, setRespondentCookie } from './cookie';
 import { verifySurveyPasswordTokenSignature } from './utils/survey-password-token';
 import { verifySessionToken } from './utils/session';
 import { ROLE_HIERARCHY, type UserRole } from './constants';
+import { canDeleteSurvey } from '../../shared/survey-permissions';
+import type { UserInfo } from './services/auth.service';
 import { SURVEY_ID_PATTERN, PUBLIC_PATTERN } from './routing';
 
 const { preflight, corsify } = cors();
@@ -304,19 +306,29 @@ export default {
 
     const isPublicRoute = !!doMatch.slug;
 
+    // Nested deletes (sections, questions, respondents) hit the same DO route,
+    // so only a top-level survey delete needs the ownership check and may drop
+    // the catalog row.
+    const surveySubPath = pathname.match(SURVEY_ID_PATTERN)?.[2] ?? '';
+    const isTopLevelSurveyDelete =
+      method === 'DELETE' && !!doMatch.surveyId && (surveySubPath === '' || surveySubPath === '/');
+
     // Authenticate: admin routes need auth + role check.
     // Public routes: the worker doesn't gate on password requirements (which
     // would require knowing the current password_hash and risk cross-isolate
     // staleness). Instead, the worker verifies the spw_ cookie if present and
     // forwards an X-Authenticated header — the DO checks its own
     // (always-current) survey.password_hash and rejects with 403 when needed.
-    if (!isPublicRoute) {
-      const authResult = await authenticateRequest(request, config);
-      if (authResult instanceof Response) return authResult;
+    const user = isPublicRoute ? null : await authenticateRequest(request, config);
+    if (user instanceof Response) return user;
 
+    if (user) {
       const subPath = pathname.match(SURVEY_ID_PATTERN)?.[2] || '/';
       const requiredRole = getRequiredDORole(method, subPath);
-      if (!checkRole(authResult, requiredRole)) {
+      if (!checkRole(user.role, requiredRole)) {
+        return Response.json({ error: 'Insufficient permissions' }, { status: 403 });
+      }
+      if (isTopLevelSurveyDelete && !canDeleteSurvey(user, await getCatalogCreator(env.DB, surveyId))) {
         return Response.json({ error: 'Insufficient permissions' }, { status: 403 });
       }
     }
@@ -333,10 +345,10 @@ export default {
         const authResult = await authenticateRequest(request, config);
         if (authResult instanceof Response) return authResult;
         const minRole = wsType === 'editor' ? 'editor' : 'viewer';
-        if (!checkRole(authResult, minRole)) {
+        if (!checkRole(authResult.role, minRole)) {
           return Response.json({ error: 'Insufficient permissions' }, { status: 403 });
         }
-        wsRole = authResult;
+        wsRole = authResult.role;
       }
 
       const wsHeaders = new Headers(request.headers);
@@ -419,11 +431,14 @@ export default {
       };
       const newId = dupData.survey.id as string;
       const s = dupData.survey;
+      // The DO copies every column from the source survey; the copy belongs
+      // to whoever duplicated it.
+      s.created_by = user?.sub ?? null;
       await env.DB.prepare(
         `INSERT INTO surveys (id, title, description, slug, status, welcome_title, welcome_description,
           thank_you_title, thank_you_description, closes_at, max_responses, randomize_questions,
-          randomize_options, password_hash, archived_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          randomize_options, password_hash, archived_at, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
         .bind(
           s.id,
@@ -441,6 +456,7 @@ export default {
           s.randomize_options,
           s.password_hash,
           s.archived_at,
+          s.created_by,
           s.created_at,
           s.updated_at,
         )
@@ -451,11 +467,7 @@ export default {
       return dupResponse;
     }
 
-    // Nested deletes (sections, questions, respondents) hit the same DO route,
-    // so only a top-level survey delete may drop the catalog row.
-    const surveySubPath = pathname.match(SURVEY_ID_PATTERN)?.[2] ?? '';
-    const isTopLevelSurveyDelete = surveySubPath === '' || surveySubPath === '/';
-    if (method === 'DELETE' && doResponse.status === 204 && doMatch.surveyId && isTopLevelSurveyDelete) {
+    if (isTopLevelSurveyDelete && doResponse.status === 204) {
       // Otherwise a new survey re-using this slug could route to the deleted DO
       // via this isolate's stale cache.
       invalidateSlugCacheBySurveyId(surveyId);
@@ -519,11 +531,10 @@ function allowedCredentialedOrigin(request: Request, config: import('./config').
   return null;
 }
 
+/** A top-level survey delete also needs canDeleteSurvey, checked against the catalog. */
 function getRequiredDORole(method: string, subPath: string): UserRole {
   if (method === 'DELETE') {
-    if (subPath === '/' || subPath === '' || /^\/results\/respondents\//.test(subPath)) {
-      return 'admin';
-    }
+    if (/^\/results\/respondents\//.test(subPath)) return 'admin';
     return 'editor';
   }
   if (method !== 'GET' && method !== 'HEAD') return 'editor';
@@ -537,7 +548,7 @@ function getRequiredDORole(method: string, subPath: string): UserRole {
 async function authenticateRequest(
   request: Request,
   config: import('./config').AppConfig,
-): Promise<Response | UserRole> {
+): Promise<Response | UserInfo> {
   const sessionCookie = getCookie(request, 'survey_session');
   if (!sessionCookie) {
     return Response.json({ error: 'Authentication required' }, { status: 401 });
@@ -546,5 +557,14 @@ async function authenticateRequest(
   if (!user) {
     return Response.json({ error: 'Invalid or expired session' }, { status: 401 });
   }
-  return user.role;
+  return user;
+}
+
+// created_by never changes after creation, so the catalog can't be stale here.
+async function getCatalogCreator(db: D1Database, surveyId: string): Promise<string | null> {
+  const row = await db
+    .prepare('SELECT created_by FROM surveys WHERE id = ?')
+    .bind(surveyId)
+    .first<{ created_by: string | null }>();
+  return row?.created_by ?? null;
 }

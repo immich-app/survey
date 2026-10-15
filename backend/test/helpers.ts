@@ -126,11 +126,14 @@ if (process.env.SESSION_SECRET && process.env.SESSION_SECRET !== DEV_SESSION_SEC
   );
 }
 
-export async function createCookieForRole(role: 'admin' | 'editor' | 'viewer'): Promise<string> {
+export async function createCookieForRole(
+  role: 'admin' | 'editor' | 'viewer',
+  { sub = `test-${role}` }: { sub?: string } = {},
+): Promise<string> {
   const header = btoa(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
   const payload = btoa(
     JSON.stringify({
-      sub: `test-${role}`,
+      sub,
       email: `${role}@test.local`,
       name: `Test ${role.charAt(0).toUpperCase() + role.slice(1)}`,
       role,

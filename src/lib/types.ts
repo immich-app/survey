@@ -103,6 +103,7 @@ export interface Survey {
   hasPassword: boolean;
   requiresPassword?: boolean;
   archivedAt: string | null;
+  createdBy: string | null;
   createdAt: string;
   updatedAt: string;
 }

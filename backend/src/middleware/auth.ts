@@ -35,7 +35,7 @@ export function authMiddleware(ctx: AppContext): (request: AuthenticatedRequest)
   };
 }
 
-export function requireRole(user: UserInfo | undefined, minRole: UserRole): void {
+export function requireRole(user: UserInfo | undefined, minRole: UserRole): asserts user is UserInfo {
   if (!user) throw new ServiceError('Authentication required', 401);
 
   if ((ROLE_HIERARCHY[user.role] ?? 0) < (ROLE_HIERARCHY[minRole] ?? 0)) {

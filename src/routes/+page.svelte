@@ -25,8 +25,11 @@
     importSurveyDefinition,
   } from '$lib/api/surveys';
   import ImportSurveyModal from '$lib/components/dashboard/ImportSurveyModal.svelte';
+  import { getAuth } from '$lib/stores/auth.svelte';
+  import { canDeleteSurvey } from '$shared/survey-permissions';
 
   const PAGE_SIZE = 12;
+  const auth = getAuth();
 
   let surveys = $state<Survey[]>([]);
   let totalSurveys = $state(0);
@@ -334,12 +337,14 @@
                 Archive
               </button>
             {/if}
-            <button
-              class="ml-auto inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
-              onclick={() => handleDelete(survey.id)}
-            >
-              <Icon icon={mdiDeleteOutline} size="15" />
-            </button>
+            {#if auth.user && canDeleteSurvey(auth.user, survey.createdBy)}
+              <button
+                class="ml-auto inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm text-gray-500 transition-colors hover:bg-red-500/10 hover:text-red-400"
+                onclick={() => handleDelete(survey.id)}
+              >
+                <Icon icon={mdiDeleteOutline} size="15" />
+              </button>
+            {/if}
           </div>
         </div>
       {/each}

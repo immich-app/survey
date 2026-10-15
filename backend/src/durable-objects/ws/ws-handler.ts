@@ -3,7 +3,7 @@ import type { SurveyService } from '../../services/survey.service';
 import type { RespondentService } from '../../services/respondent.service';
 import type { SurveyCache } from '../cache';
 import { ServiceError } from '../../services/errors';
-import { toClientSurvey } from '../../utils/sanitize';
+import { toClientSurvey, toPublicSurvey } from '../../utils/sanitize';
 import { ROLE_HIERARCHY, BATCH_ANSWER_LIMIT, clampAnswerMs } from '../../constants';
 import { validateAnswer, type QuestionSpec } from '../../../../shared/answer-validation';
 import { execute, type CommandContext } from '../do-commands';
@@ -166,8 +166,7 @@ async function handleOp(
     case 'get-public-survey': {
       const survey = cache.survey;
       if (survey.status !== 'published') throw new ServiceError('Survey not found', 404);
-      const { password_hash: _, ...safeSurvey } = survey;
-      return { survey: safeSurvey, sections: cache.sections, questions: cache.questions };
+      return { survey: toPublicSurvey(survey), sections: cache.sections, questions: cache.questions };
     }
 
     case 'resume': {

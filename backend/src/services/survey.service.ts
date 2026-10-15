@@ -7,8 +7,10 @@ import {
   type QuestionRow,
 } from '../repositories/survey.repository';
 import { ServiceError } from './errors';
+import type { UserInfo } from './auth.service';
 import { VALID_QUESTION_TYPES, SLUG_PATTERN } from '../constants';
 import { hashPassword } from '../utils/crypto';
+import { canDeleteSurvey } from '../../../shared/survey-permissions';
 
 export interface SurveyWithDetails {
   survey: SurveyRow;
@@ -149,7 +151,7 @@ export class SurveyService {
     return { survey, sections, questions };
   }
 
-  async createSurvey(input: CreateSurveyInput): Promise<SurveyRow> {
+  async createSurvey(input: CreateSurveyInput, createdBy: string): Promise<SurveyRow> {
     if (!input.title?.trim()) {
       throw new ServiceError('Title is required', 400);
     }
@@ -171,6 +173,7 @@ export class SurveyService {
       randomize_options: 0,
       password_hash: null,
       archived_at: null,
+      created_by: createdBy,
       created_at: now,
       updated_at: now,
     };
@@ -235,9 +238,10 @@ export class SurveyService {
     return { ...existing, ...fields } as SurveyRow;
   }
 
-  async deleteSurvey(id: string): Promise<void> {
+  async deleteSurvey(id: string, user: UserInfo): Promise<void> {
     const existing = await this.surveys.getById(id);
     if (!existing) throw new ServiceError('Survey not found', 404);
+    if (!canDeleteSurvey(user, existing.created_by)) throw new ServiceError('Insufficient permissions', 403);
     await this.surveys.delete(id);
   }
 
@@ -424,7 +428,7 @@ export class SurveyService {
     await this.questions.reorder(items);
   }
 
-  async duplicateSurvey(id: string): Promise<SurveyWithDetails> {
+  async duplicateSurvey(id: string, createdBy: string): Promise<SurveyWithDetails> {
     const { survey, sections, questions } = await this.getSurvey(id);
 
     const now = new Date().toISOString();
@@ -444,6 +448,7 @@ export class SurveyService {
       randomize_options: survey.randomize_options,
       password_hash: null,
       archived_at: null,
+      created_by: createdBy,
       created_at: now,
       updated_at: now,
     };
@@ -547,7 +552,7 @@ export class SurveyService {
     };
   }
 
-  async importDefinition(def: SurveyDefinition): Promise<SurveyWithDetails> {
+  async importDefinition(def: SurveyDefinition, createdBy: string): Promise<SurveyWithDetails> {
     if (!def.title?.trim()) {
       throw new ServiceError('Import must have a title', 400);
     }
@@ -555,7 +560,7 @@ export class SurveyService {
       throw new ServiceError('Import must have at least one section', 400);
     }
 
-    const survey = await this.createSurvey({ title: def.title, description: def.description ?? undefined });
+    const survey = await this.createSurvey({ title: def.title, description: def.description ?? undefined }, createdBy);
 
     if (def.welcomeTitle || def.welcomeDescription || def.thankYouTitle || def.thankYouDescription) {
       await this.updateSurvey(survey.id, {
