@@ -191,10 +191,3 @@ export interface LiveCounts {
   activeViewers: number;
   activeRespondents: number;
 }
-
-export interface AuthUser {
-  sub: string;
-  email: string;
-  name: string;
-  role: 'admin' | 'editor' | 'viewer';
-}
