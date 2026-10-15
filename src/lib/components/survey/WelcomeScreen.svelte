@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button, Logo } from '@immich/ui';
+  import { Button } from '@immich/ui';
+  import FutoLogo from '$lib/components/layout/FutoLogo.svelte';
   import type { Survey, SurveySection } from '$lib/types';
 
   interface Props {
@@ -15,7 +16,7 @@
 
 <div class="flex flex-1 flex-col items-center justify-center gap-8 p-6">
   <div class="animate-in">
-    <Logo variant="stacked" size="giant" />
+    <FutoLogo size="giant" />
   </div>
 
   <div class="animate-in animate-in-delay-1 flex max-w-[640px] flex-col gap-5 text-base">

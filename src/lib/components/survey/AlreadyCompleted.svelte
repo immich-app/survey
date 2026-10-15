@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { Button, Logo } from '@immich/ui';
+  import { Button } from '@immich/ui';
+  import FutoLogo from '$lib/components/layout/FutoLogo.svelte';
 
   interface Props {
     slug: string;
@@ -14,7 +15,7 @@
 </script>
 
 <div class="flex flex-1 flex-col items-center justify-center gap-6 p-6 text-center">
-  <Logo variant="stacked" size="large" />
+  <FutoLogo size="large" />
 
   <h1 class="text-3xl font-bold">You've already completed this survey</h1>
   <p class="text-gray-500">Your responses were recorded. Thank you for your feedback!</p>
