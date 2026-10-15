@@ -32,6 +32,7 @@
     randomizeOptions: false,
     hasPassword: false,
     archivedAt: null,
+    createdBy: null,
     createdAt: '',
     updatedAt: '',
   });

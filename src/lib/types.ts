@@ -103,6 +103,7 @@ export interface Survey {
   hasPassword: boolean;
   requiresPassword?: boolean;
   archivedAt: string | null;
+  createdBy: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -189,11 +190,4 @@ export interface SearchResult {
 export interface LiveCounts {
   activeViewers: number;
   activeRespondents: number;
-}
-
-export interface AuthUser {
-  sub: string;
-  email: string;
-  name: string;
-  role: 'admin' | 'editor' | 'viewer';
 }

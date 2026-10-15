@@ -1,5 +1,4 @@
 import { describe, it, expect } from 'vitest';
-import type { AuthUser } from '../types';
 
 // ── Pure-function replicas of auth logic for testing ─────────────────────
 
@@ -55,14 +54,6 @@ function extractRole(
   }
 
   return 'viewer';
-}
-
-/**
- * Mirrors `getAuth().hasRole()` from stores/auth.svelte.ts
- */
-function hasRole(user: AuthUser | null, minRole: UserRole): boolean {
-  if (!user) return false;
-  return ROLE_HIERARCHY[user.role] >= ROLE_HIERARCHY[minRole];
 }
 
 function isValidJwtStructure(token: string): boolean {
@@ -173,24 +164,6 @@ describe('Role hierarchy — requireRole', () => {
     expect(viewerLevel).toBeLessThan(ROLE_HIERARCHY.admin);
     expect(viewerLevel).toBeLessThan(ROLE_HIERARCHY.editor);
     expect(viewerLevel).toBeGreaterThanOrEqual(ROLE_HIERARCHY.viewer);
-  });
-});
-
-describe('Role hierarchy — client-side hasRole', () => {
-  it('returns false for null user', () => {
-    expect(hasRole(null, 'viewer')).toBe(false);
-  });
-
-  it('admin has admin role', () => {
-    expect(hasRole({ sub: '1', email: '', name: '', role: 'admin' }, 'admin')).toBe(true);
-  });
-
-  it('editor does not have admin role', () => {
-    expect(hasRole({ sub: '1', email: '', name: '', role: 'editor' }, 'admin')).toBe(false);
-  });
-
-  it('editor has viewer role', () => {
-    expect(hasRole({ sub: '1', email: '', name: '', role: 'editor' }, 'viewer')).toBe(true);
   });
 });
 

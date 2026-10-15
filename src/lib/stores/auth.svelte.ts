@@ -70,10 +70,5 @@ export function getAuth() {
     get role() {
       return user?.role ?? null;
     },
-    hasRole(minRole: UserRole): boolean {
-      if (!user) return false;
-      const hierarchy: Record<UserRole, number> = { admin: 3, editor: 2, viewer: 1 };
-      return hierarchy[user.role] >= hierarchy[minRole];
-    },
   };
 }

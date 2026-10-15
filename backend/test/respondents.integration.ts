@@ -20,6 +20,12 @@ describe('Respondent Flow', () => {
     expect(data.questions.length).toBe(3);
   });
 
+  it("does not expose the survey's creator", async () => {
+    const res = await request(`/api/s/${slug}`);
+    const data = (await res.json()) as { survey: Record<string, unknown> };
+    expect(data.survey).not.toHaveProperty('created_by');
+  });
+
   it('resumes and creates new respondent', async () => {
     const res = await request(`/api/s/${slug}/resume`);
     expect(res.status).toBe(200);

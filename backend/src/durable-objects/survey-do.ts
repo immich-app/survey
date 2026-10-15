@@ -16,7 +16,7 @@ import {
   SLOW_TICKS_PER_CYCLE,
 } from './ws/ws-broadcaster';
 import { execute, type CommandContext } from './do-commands';
-import { toClientSurvey } from '../utils/sanitize';
+import { toClientSurvey, toPublicSurvey } from '../utils/sanitize';
 import { fingerprintMatchesPassword } from '../utils/survey-password-token';
 import type { Database, SurveyRow, SectionRow, QuestionRow } from '../db';
 import { SURVEY_ID_PATTERN, PUBLIC_PATTERN } from '../routing';
@@ -219,8 +219,8 @@ export class SurveyDO extends DurableObject {
     this.ctx.storage.sql.exec(
       `INSERT OR REPLACE INTO surveys (id, title, description, slug, status, welcome_title,
         welcome_description, thank_you_title, thank_you_description, closes_at, max_responses,
-        randomize_questions, randomize_options, password_hash, archived_at, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        randomize_questions, randomize_options, password_hash, archived_at, created_by, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       s.id,
       s.title,
       s.description,
@@ -236,6 +236,7 @@ export class SurveyDO extends DurableObject {
       s.randomize_options,
       s.password_hash,
       s.archived_at,
+      s.created_by ?? null,
       s.created_at,
       s.updated_at,
     );
@@ -407,8 +408,11 @@ export class SurveyDO extends DurableObject {
         requiresPassword: true,
       });
     }
-    const { password_hash: _, ...safeSurvey } = survey;
-    return Response.json({ survey: safeSurvey, sections: this.cache.sections, questions: this.cache.questions });
+    return Response.json({
+      survey: toPublicSurvey(survey),
+      sections: this.cache.sections,
+      questions: this.cache.questions,
+    });
   }
 
   private async handleResume(request: Request): Promise<Response> {

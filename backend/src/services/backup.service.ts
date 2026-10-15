@@ -24,6 +24,7 @@ const TABLE_COLUMNS: Record<string, readonly string[]> = {
     'randomize_options',
     'password_hash',
     'archived_at',
+    'created_by',
     'created_at',
     'updated_at',
   ],

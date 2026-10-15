@@ -156,11 +156,13 @@ The app supports any OIDC-compliant identity provider (Keycloak, Auth0, Okta, Az
 
 The app extracts roles from a configurable OIDC claim. Three roles are supported:
 
-| Role       | Permissions                                                                                       |
-| ---------- | ------------------------------------------------------------------------------------------------- |
-| **admin**  | Full access: create, edit, delete, publish surveys; manage tags; view audit log; delete responses |
-| **editor** | Create and edit surveys, publish/unpublish, manage tags, import/export                            |
-| **viewer** | View surveys and results, export data                                                             |
+| Role       | Permissions                                                                                                  |
+| ---------- | ------------------------------------------------------------------------------------------------------------ |
+| **admin**  | Full access: create, edit, delete any survey, publish surveys; manage tags; view audit log; delete responses |
+| **editor** | Create and edit surveys, delete surveys they created, publish/unpublish, manage tags, import/export          |
+| **viewer** | View surveys and results, export data                                                                        |
+
+A survey's creator is recorded from their OIDC subject when they create, import, or duplicate it. Surveys without a recorded creator, such as those restored from a backup taken before creators were recorded, can only be deleted by an admin.
 
 The `OIDC_ROLE_CLAIM` supports nested paths for providers like Keycloak:
 
@@ -228,20 +230,20 @@ cd backend && npx wrangler d1 migrations apply survey --remote
 
 ### Surveys (requires auth)
 
-| Method   | Path                          | Description                            |
-| -------- | ----------------------------- | -------------------------------------- |
-| `GET`    | `/api/surveys?archived=true`  | List surveys                           |
-| `POST`   | `/api/surveys`                | Create survey                          |
-| `GET`    | `/api/surveys/:id`            | Get survey with sections and questions |
-| `PUT`    | `/api/surveys/:id`            | Update survey                          |
-| `DELETE` | `/api/surveys/:id`            | Delete survey                          |
-| `PUT`    | `/api/surveys/:id/publish`    | Publish                                |
-| `PUT`    | `/api/surveys/:id/unpublish`  | Unpublish                              |
-| `POST`   | `/api/surveys/:id/duplicate`  | Duplicate                              |
-| `PUT`    | `/api/surveys/:id/archive`    | Archive                                |
-| `PUT`    | `/api/surveys/:id/unarchive`  | Unarchive                              |
-| `GET`    | `/api/surveys/:id/definition` | Export definition                      |
-| `POST`   | `/api/surveys/import`         | Import definition                      |
+| Method   | Path                          | Description                                         |
+| -------- | ----------------------------- | --------------------------------------------------- |
+| `GET`    | `/api/surveys?archived=true`  | List surveys                                        |
+| `POST`   | `/api/surveys`                | Create survey                                       |
+| `GET`    | `/api/surveys/:id`            | Get survey with sections and questions              |
+| `PUT`    | `/api/surveys/:id`            | Update survey                                       |
+| `DELETE` | `/api/surveys/:id`            | Delete survey (admin, or the editor who created it) |
+| `PUT`    | `/api/surveys/:id/publish`    | Publish                                             |
+| `PUT`    | `/api/surveys/:id/unpublish`  | Unpublish                                           |
+| `POST`   | `/api/surveys/:id/duplicate`  | Duplicate                                           |
+| `PUT`    | `/api/surveys/:id/archive`    | Archive                                             |
+| `PUT`    | `/api/surveys/:id/unarchive`  | Unarchive                                           |
+| `GET`    | `/api/surveys/:id/definition` | Export definition                                   |
+| `POST`   | `/api/surveys/import`         | Import definition                                   |
 
 ### Sections & Questions (requires auth)
 

@@ -1,6 +1,15 @@
 import { describe, expect, it, beforeAll } from 'vitest';
 import { request, createCookieForRole } from './helpers';
 
+async function createSurvey(cookie: string): Promise<{ id: string }> {
+  const res = await request('/api/surveys', {
+    method: 'POST',
+    body: JSON.stringify({ title: `Auth Test ${Date.now()}` }),
+    cookie,
+  });
+  return (await res.json()) as { id: string };
+}
+
 describe('Authorization - unauthenticated requests', () => {
   it('rejects unauthenticated GET /api/surveys with 401', async () => {
     const res = await request('/api/surveys');
@@ -84,14 +93,7 @@ describe('Authorization - editor role', () => {
 
   beforeAll(async () => {
     editorCookie = await createCookieForRole('editor');
-
-    const surveyRes = await request('/api/surveys', {
-      method: 'POST',
-      body: JSON.stringify({ title: `Editor Auth Test ${Date.now()}` }),
-      cookie: editorCookie,
-    });
-    const survey = (await surveyRes.json()) as { id: string };
-    surveyId = survey.id;
+    surveyId = (await createSurvey(editorCookie)).id;
 
     const tagRes = await request('/api/tags', {
       method: 'POST',
@@ -125,10 +127,63 @@ describe('Authorization - editor role', () => {
     expect(res.status).toBe(201);
   });
 
-  it('cannot DELETE /api/surveys/:id (403)', async () => {
+  it('can DELETE a survey they created', async () => {
     const res = await request(`/api/surveys/${surveyId}`, {
       method: 'DELETE',
       cookie: editorCookie,
+    });
+    expect(res.status).toBe(204);
+  });
+
+  it("cannot DELETE another editor's survey (403)", async () => {
+    const otherEditorCookie = await createCookieForRole('editor', { sub: 'test-other-editor' });
+    const { id } = await createSurvey(otherEditorCookie);
+
+    const res = await request(`/api/surveys/${id}`, {
+      method: 'DELETE',
+      cookie: editorCookie,
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it('can DELETE a survey they duplicated from someone else', async () => {
+    const adminCookie = await createCookieForRole('admin');
+    const { id: sourceId } = await createSurvey(adminCookie);
+    const dupRes = await request(`/api/surveys/${sourceId}/duplicate`, {
+      method: 'POST',
+      cookie: editorCookie,
+    });
+    const { survey } = (await dupRes.json()) as { survey: { id: string } };
+
+    const res = await request(`/api/surveys/${survey.id}`, {
+      method: 'DELETE',
+      cookie: editorCookie,
+    });
+    expect(res.status).toBe(204);
+  });
+
+  it('can DELETE a survey they imported', async () => {
+    const importRes = await request('/api/surveys/import', {
+      method: 'POST',
+      body: JSON.stringify({ version: 1, title: `Editor Import ${Date.now()}`, sections: [{ title: 'Section' }] }),
+      cookie: editorCookie,
+    });
+    const { survey } = (await importRes.json()) as { survey: { id: string } };
+
+    const res = await request(`/api/surveys/${survey.id}`, {
+      method: 'DELETE',
+      cookie: editorCookie,
+    });
+    expect(res.status).toBe(204);
+  });
+
+  it('cannot DELETE a survey they created after being demoted to viewer (403)', async () => {
+    const { id } = await createSurvey(editorCookie);
+    const demotedCookie = await createCookieForRole('viewer', { sub: 'test-editor' });
+
+    const res = await request(`/api/surveys/${id}`, {
+      method: 'DELETE',
+      cookie: demotedCookie,
     });
     expect(res.status).toBe(403);
   });
@@ -163,13 +218,9 @@ describe('Authorization - admin role', () => {
     expect(res.status).toBe(201);
   });
 
-  it('can DELETE /api/surveys/:id', async () => {
-    const createRes = await request('/api/surveys', {
-      method: 'POST',
-      body: JSON.stringify({ title: `Admin Delete ${Date.now()}` }),
-      cookie: adminCookie,
-    });
-    const { id } = (await createRes.json()) as { id: string };
+  it("can DELETE another user's survey", async () => {
+    const editorCookie = await createCookieForRole('editor');
+    const { id } = await createSurvey(editorCookie);
 
     const res = await request(`/api/surveys/${id}`, {
       method: 'DELETE',

@@ -2,6 +2,7 @@ import { createRespondentService, createSurveyService } from '../services/factor
 import { ServiceError } from '../services/errors';
 import { getCookie, getRespondentId, setRespondentCookie, deleteRespondentCookie } from '../cookie';
 import { verifyPassword } from '../utils/crypto';
+import { toPublicSurvey } from '../utils/sanitize';
 import { mintSurveyPasswordToken, verifySurveyPasswordToken } from '../utils/survey-password-token';
 import { PASSWORD_SESSION_MAX_AGE } from '../constants';
 import { getContext, type AppContext } from '../config';
@@ -60,8 +61,7 @@ export function registerRespondentRoutes(router: AppRouter) {
       }
     }
 
-    const { password_hash: _password_hash, ...safeSurvey } = result.survey;
-    const response = Response.json({ ...result, survey: safeSurvey });
+    const response = Response.json({ ...result, survey: toPublicSurvey(result.survey) });
     response.headers.set(
       'Cache-Control',
       result.survey.password_hash

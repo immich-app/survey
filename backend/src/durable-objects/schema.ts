@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS surveys (
   randomize_options INTEGER DEFAULT 0,
   password_hash TEXT,
   archived_at TEXT,
+  created_by TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -77,7 +78,10 @@ CREATE TABLE IF NOT EXISTS answers (
 const initializedInstances = new WeakSet<SqlStorage>();
 
 /** Additive migrations, replayed on every boot — there is no version table, so each must be safe to re-run. */
-const MIGRATIONS: string[] = ['ALTER TABLE answers ADD COLUMN answer_ms INTEGER'];
+const MIGRATIONS: string[] = [
+  'ALTER TABLE answers ADD COLUMN answer_ms INTEGER',
+  'ALTER TABLE surveys ADD COLUMN created_by TEXT',
+];
 
 function isAlreadyAppliedError(e: unknown): boolean {
   const msg = e instanceof Error ? e.message.toLowerCase() : '';

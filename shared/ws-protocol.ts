@@ -19,6 +19,7 @@ export interface SurveyRow {
   randomize_options: number;
   password_hash: string | null;
   archived_at: string | null;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -126,7 +127,7 @@ export interface SurveyWithDetailsPayload {
 }
 
 export interface PublicSurveyPayload {
-  survey: Omit<SurveyRow, 'password_hash'> | Partial<SurveyRow>;
+  survey: Omit<SurveyRow, 'password_hash' | 'created_by'> | Partial<SurveyRow>;
   sections: SectionRow[];
   questions: QuestionRow[];
   requiresPassword?: boolean;

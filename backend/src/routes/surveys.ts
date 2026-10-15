@@ -34,7 +34,7 @@ export function registerSurveyRoutes(router: AppRouter) {
     const ctx = getContext(request);
     const service = createSurveyService(ctx.db);
     const body = (await request.json()) as CreateSurveyInput;
-    const survey = await service.createSurvey(body);
+    const survey = await service.createSurvey(body, request.user.sub);
     return Response.json(survey, { status: 201 });
   });
 
@@ -56,10 +56,10 @@ export function registerSurveyRoutes(router: AppRouter) {
   });
 
   router.delete('/api/surveys/:id', async (request: AuthenticatedRequest) => {
-    requireRole(request.user, 'admin');
+    requireRole(request.user, 'editor');
     const ctx = getContext(request);
     const service = createSurveyService(ctx.db);
-    await service.deleteSurvey(request.params.id);
+    await service.deleteSurvey(request.params.id, request.user);
     return new Response(null, { status: 204 });
   });
 
@@ -83,7 +83,7 @@ export function registerSurveyRoutes(router: AppRouter) {
     requireRole(request.user, 'editor');
     const ctx = getContext(request);
     const service = createSurveyService(ctx.db);
-    const result = await service.duplicateSurvey(request.params.id);
+    const result = await service.duplicateSurvey(request.params.id, request.user.sub);
     return Response.json(result, { status: 201 });
   });
 
@@ -116,7 +116,7 @@ export function registerSurveyRoutes(router: AppRouter) {
     const ctx = getContext(request);
     const service = createSurveyService(ctx.db);
     const body = (await request.json()) as SurveyDefinition;
-    const result = await service.importDefinition(body);
+    const result = await service.importDefinition(body, request.user.sub);
     return Response.json(result, { status: 201 });
   });
 
