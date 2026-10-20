@@ -229,17 +229,17 @@ resource "cloudflare_workers_deployment" "api" {
   }]
 }
 
-data "cloudflare_zone" "futo_org" {
+data "cloudflare_zone" "futo_tech" {
   filter = {
     account_id = local.account_id
-    name       = "futo.org"
+    name       = "futo.tech"
   }
 }
 
 # A Worker with no deployed version does not exist as far as the routes API is
 # concerned, and referencing only the name would let these race the deployment.
 resource "cloudflare_workers_route" "survey_api_root" {
-  zone_id = data.cloudflare_zone.futo_org.zone_id
+  zone_id = data.cloudflare_zone.futo_tech.zone_id
   pattern = "${module.domain.fqdn}/api"
   script  = cloudflare_worker.api.name
 
@@ -247,7 +247,7 @@ resource "cloudflare_workers_route" "survey_api_root" {
 }
 
 resource "cloudflare_workers_route" "survey_api_wildcard" {
-  zone_id = data.cloudflare_zone.futo_org.zone_id
+  zone_id = data.cloudflare_zone.futo_tech.zone_id
   pattern = "${module.domain.fqdn}/api/*"
   script  = cloudflare_worker.api.name
 
@@ -260,5 +260,5 @@ module "domain" {
   app_name = var.subdomain
   stage    = var.stage
   env      = var.env
-  domain   = "futo.org"
+  domain   = "futo.tech"
 }
