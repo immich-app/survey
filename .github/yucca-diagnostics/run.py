@@ -1,6 +1,8 @@
 """Fixed, bounded Linux experiments; never dumps environment or command lines."""
 
+import array
 import concurrent.futures
+import fcntl
 import hashlib
 import ipaddress
 import json
@@ -32,7 +34,12 @@ IO_KEYS = {"rchar", "wchar", "syscr", "syscw", "read_bytes", "write_bytes", "can
 CPU_KEYS = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal", "guest", "guest_nice")
 CGROUP_CPU_KEYS = {"usage_usec", "user_usec", "system_usec", "nr_periods", "nr_throttled", "throttled_usec", "nr_bursts", "burst_usec"}
 CGROUP_MEMORY_KEYS = {"low", "high", "max", "oom", "oom_kill", "oom_group_kill"}
-STAGES = {"network_npm_metadata_1", "network_npm_metadata_2", "network_npm_metadata_3", "network_node_archive", "tools_pnpm_install", "cpu_sha256_1", "cpu_sha256_4", "cpu_zlib_1", "cpu_zlib_4", "fs_small_workspace", "fs_small_shm", "fs_large_workspace", "pnpm_fetch", "pnpm_offline_no_scripts", "pnpm_offline_hardlink", "pnpm_offline_copy", "pnpm_offline_rayon_1", "pnpm_offline_rayon_4", "pnpm_offline_with_scripts", "pnpm_exec_verify_install", "pnpm_exec_verify_ignore"}
+STAGES = {"network_npm_metadata_1", "network_npm_metadata_2", "network_npm_metadata_3", "network_node_archive", "tools_pnpm_install", "cpu_sha256_1", "cpu_sha256_4", "cpu_zlib_1", "cpu_zlib_4", "fs_small_workspace", "fs_small_shm", "fs_large_workspace", "pnpm_fetch", "pnpm_offline_no_scripts", "pnpm_offline_hardlink", "pnpm_offline_copy", "pnpm_offline_rayon_1", "pnpm_offline_rayon_4", "pnpm_offline_with_scripts", "pnpm_exec_verify_install", "pnpm_exec_verify_ignore", "pnpm_fresh_fetch_default", "pnpm_fresh_fetch_nocompress", "pnpm_fresh_install_default", "pnpm_fresh_install_nocompress"}
+FS_IOC_GETFLAGS = 0x80086601  # Linux amd64 _IOR('f', 1, long); argument remains int*.
+FS_IOC_SETFLAGS = 0x40086602
+FS_COMPR_FL = 0x00000004
+FS_NOCOMP_FL = 0x00000400
+FS_NOCOW_FL = 0x00800000
 
 
 def read(path):
@@ -119,6 +126,22 @@ def filesystem(path):
             projected = sorted({option for option in options if option in safe or re.fullmatch(r"compress(?:-force)?=(?:zstd|zlib|lzo)(?::[0-9]{1,2})?|(?:commit|metadata_ratio|max_inline)=[0-9]{1,6}", option)})
             match = {"mountpoint": mount, "fstype": fields[separator + 1], "device": fields[2], "options": projected}
     return {**(match or {}), "block_bytes": info.f_frsize, "total_bytes": info.f_blocks * info.f_frsize, "available_bytes": info.f_bavail * info.f_frsize, "files": info.f_files, "files_free": info.f_ffree}
+
+
+def inode_flags(path, nocompress=False):
+    descriptor = os.open(path, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+    try:
+        if os.fstat(descriptor).st_uid != os.getuid():
+            raise ProbeFailure()
+        flags = array.array("I", [0])
+        fcntl.ioctl(descriptor, FS_IOC_GETFLAGS, flags, True)
+        if nocompress:
+            flags[0] = (flags[0] & ~FS_COMPR_FL) | FS_NOCOMP_FL
+            fcntl.ioctl(descriptor, FS_IOC_SETFLAGS, flags, True)
+            fcntl.ioctl(descriptor, FS_IOC_GETFLAGS, flags, True)
+        return {"nocompress": bool(flags[0] & FS_NOCOMP_FL), "compress": bool(flags[0] & FS_COMPR_FL), "nocow": bool(flags[0] & FS_NOCOW_FL)}
+    finally:
+        os.close(descriptor)
 
 
 def cpu_worker(payload):
@@ -252,13 +275,13 @@ class Diagnostics:
             pending.extend(int(value) for value in read(Path("/proc") / str(pid) / "task" / str(pid) / "children").split() if value.isdecimal())
         self.tree_peak = max(self.tree_peak, rss)
 
-    def command(self, arguments, timeout=45, extra=None):
+    def command(self, arguments, timeout=45, extra=None, cwd=None):
         remaining = MAX_SECONDS - (time.monotonic() - self.started)
         if remaining <= 0:
             raise ProbeFailure(124)
         log = self.directory / "command-output"
         with log.open("wb") as output:
-            process = subprocess.Popen(arguments, stdout=output, stderr=output, env={**os.environ, **(extra or {})}, start_new_session=True)
+            process = subprocess.Popen(arguments, stdout=output, stderr=output, env={**os.environ, **(extra or {})}, cwd=cwd, start_new_session=True)
             until = time.monotonic() + min(timeout, remaining)
             while True:
                 self.sample_processes(process.pid)
@@ -314,6 +337,52 @@ class Diagnostics:
         result = self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--ignore-scripts", "--package-import-method=" + method, "--store-dir", str(store), "--reporter=ndjson"], 45, extra)
         return {**result, "variant": "offline-no-scripts" if method == "auto" else "offline-" + method, "requested_import_method": method, "requested_pool_threads": pool_threads}
 
+    def fresh_install_experiment(self, requested):
+        variant = "nocompress" if requested else "default"
+        root = self.directory / ("fresh-" + variant)
+        root.mkdir()
+        btrfs = filesystem(root).get("fstype") == "btrfs"
+        if requested and btrfs:
+            flags = inode_flags(root, nocompress=True)
+            if not flags["nocompress"] or flags["compress"] or flags["nocow"]:
+                raise ProbeFailure()
+        project, store = root / "project", root / "store"
+        project.mkdir()
+        store.mkdir()
+        (project / "backend").mkdir()
+        for name in ["package.json", "pnpm-workspace.yaml", "pnpm-lock.yaml", ".npmrc", "backend/package.json"]:
+            shutil.copyfile(name, project / name)
+        probe = store / "flag-probe"
+        probe.write_bytes(b"flag-inheritance")
+        flags = inode_flags(probe) if btrfs else {"nocompress": False, "compress": False, "nocow": False}
+        probe.unlink()
+        if btrfs and (flags["nocow"] or flags["nocompress"] != requested):
+            raise ProbeFailure()
+        extra = {name: str(root / relative) for name, relative in {"XDG_CACHE_HOME": "xdg-cache", "XDG_CONFIG_HOME": "xdg-config", "XDG_DATA_HOME": "xdg-data", "XDG_STATE_HOME": "xdg-state", "PNPM_HOME": "pnpm-home", "PNPM_CONFIG_CACHE_DIR": "pnpm-cache", "PNPM_CONFIG_STATE_DIR": "pnpm-state", "PNPM_CONFIG_STORE_DIR": "store", "npm_config_cache": "npm-cache"}.items()}
+        details = {"compression_requested": requested, "compression_flag_applied": requested and btrfs, "flag_probe": flags}
+        def fetch():
+            result = self.command(["pnpm", "fetch", "--ignore-scripts", "--store-dir", str(store), "--reporter=ndjson"], 60, extra, project)
+            samples, nocompress = 0, 0
+            if btrfs:
+                for directory, _directories, files in os.walk(store):
+                    for name in files:
+                        sample = inode_flags(Path(directory) / name)
+                        if sample["nocow"] or requested and not sample["nocompress"]:
+                            raise ProbeFailure()
+                        samples += 1
+                        nocompress += sample["nocompress"]
+                        if samples == 20:
+                            break
+                    if samples == 20:
+                        break
+                if samples < 1:
+                    raise ProbeFailure()
+            return {**result, **details, "store_flag_samples": samples, "store_nocompress_samples": nocompress}
+        self.stage("pnpm_fresh_fetch_" + variant, fetch)
+        for relative in ["node_modules", "backend/node_modules"]:
+            shutil.rmtree(project / relative, ignore_errors=True)
+        self.stage("pnpm_fresh_install_" + variant, lambda: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--store-dir", str(store), "--reporter=ndjson"], 45, extra, project), **details})
+
     def run(self):
         affinity = sorted(os.sched_getaffinity(0))
         if len(affinity) != 4 or os.getuid() == 0:
@@ -366,6 +435,8 @@ class Diagnostics:
         self.stage("pnpm_offline_with_scripts", lambda: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--store-dir", str(store), "--reporter=ndjson"], 45), "variant": "offline-with-scripts"})
         for value, name in [("install", "install"), ("false", "ignore")]:
             self.stage("pnpm_exec_verify_" + name, lambda value=value, name=name: {**self.command(["pnpm", "exec", "node", "--version"], 20, {"PNPM_CONFIG_VERIFY_DEPS_BEFORE_RUN": value}), "variant": "verify-" + name, "verify_deps_before_run": value})
+        for requested in ([False, True] if self.common["pair"] % 2 else [True, False]):
+            self.fresh_install_experiment(requested)
 
 
 if __name__ == "__main__":
