@@ -36,13 +36,13 @@ concurrency:
 
 jobs:
   frontend:
-    name: frontend / ${{ inputs.shape || 'lite' }} / trial ${{ inputs.trial || '1' }}
-    runs-on: ${{ inputs.shape == 'github' && 'ubuntu-latest' || format('yucca-cloudflare-{0}', inputs.shape || 'lite') }}
+    name: frontend / ${{ inputs.shape || 'basic' }} / trial ${{ inputs.trial || '1' }}
+    runs-on: ${{ inputs.shape == 'github' && 'ubuntu-latest' || format('yucca-cloudflare-{0}', inputs.shape || 'basic') }}
     timeout-minutes: 30
     env:
       CI: "true"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      BENCHMARK_SHAPE: ${{ inputs.shape || 'lite' }}
+      BENCHMARK_SHAPE: ${{ inputs.shape || 'basic' }}
       BENCHMARK_TRIAL: ${{ inputs.trial || '1' }}
     defaults:
       run:
@@ -54,6 +54,22 @@ jobs:
           import json
           import os
           from datetime import datetime, timezone
+          from pathlib import Path
+          names = {"Uid", "Gid", "Groups", "NoNewPrivs", "CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"}
+          status = {key: value.split() for line in Path("/proc/self/status").read_text().splitlines() if ":" in line for key, value in [line.split(":", 1)] if key in names}
+          security = {
+              "uids": [int(value) for value in status["Uid"]],
+              "gids": [int(value) for value in status["Gid"]],
+              "supplementary_group_count": len(status["Groups"]),
+              "no_new_privs": status["NoNewPrivs"] == ["1"],
+              "capabilities": {key: int(status[key][0], 16) for key in ["CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"]},
+          }
+          if os.environ["BENCHMARK_SHAPE"] != "github" and (
+              security["uids"] != [1000] * 4 or security["gids"] != [1000] * 4
+              or security["supplementary_group_count"] or not security["no_new_privs"]
+              or any(security["capabilities"].values())
+          ):
+              raise SystemExit("Native runner privilege validation failed")
           print("YUCCA_FRONTEND_SHAPES_JSON " + json.dumps({
               "schema": 1, "kind": "first_user_step", "workload": "survey-frontend",
               "shape": os.environ["BENCHMARK_SHAPE"], "trial": int(os.environ["BENCHMARK_TRIAL"]),
@@ -62,6 +78,7 @@ jobs:
               "source_commit": "d9a9649227cb44844506be8f25ee5d6bf6846b5f",
               "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
               "utc": datetime.now(timezone.utc).isoformat(),
+              "security": security,
           }, sort_keys=True), flush=True)
           PY
 
