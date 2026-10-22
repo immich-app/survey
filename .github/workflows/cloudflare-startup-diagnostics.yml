@@ -1,0 +1,95 @@
+name: Yucca native runner startup diagnostics
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-startup-diagnostics-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-native-startup-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  startup:
+    name: startup / ${{ matrix.backend }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 3
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+          - backend: github
+            runner: ubuntu-latest
+    env:
+      BENCHMARK_BACKEND: ${{ matrix.backend }}
+    steps:
+      - name: Record the first user step
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          print("YUCCA_STARTUP_JSON " + json.dumps({
+              "schema": 1, "kind": "first_user_step",
+              "backend": os.environ["BENCHMARK_BACKEND"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "commit": os.environ["GITHUB_SHA"],
+              "runner_name": os.environ["RUNNER_NAME"],
+              "utc": datetime.now(UTC).isoformat(),
+              "affinity": sorted(os.sched_getaffinity(0)),
+          }, sort_keys=True), flush=True)
+          PY
+
+      - name: Project fixed native diagnostic events
+        shell: bash
+        env:
+          STARTUP_HELPER_SHA256: 9128f97eb87c673c1eee82729ee1bad13cd54c1c34aeef04b1863493fdfa72bf
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import re
+          import urllib.request
+
+          sha = os.environ["GITHUB_SHA"]
+          if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
+              raise SystemExit("Startup helper revision invalid")
+          url = f"https://raw.githubusercontent.com/immich-app/survey/{sha}/examples/diagnostics/startup.py"
+          request = urllib.request.Request(url, headers={"User-Agent": "yucca-ci-startup-diagnostics/0.1"})
+          try:
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  source = response.read(65537)
+          except (OSError, ValueError):
+              raise SystemExit("Startup helper unavailable") from None
+          if len(source) > 65536 or hashlib.sha256(source).hexdigest() != os.environ["STARTUP_HELPER_SHA256"]:
+              raise SystemExit("Startup helper checksum mismatch")
+          exec(compile(source, "startup_diagnostics", "exec"), {"__name__": "__main__"})
+          PY
+
+      - name: Record the last user step
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import UTC, datetime
+          print("YUCCA_STARTUP_JSON " + json.dumps({
+              "schema": 1, "kind": "last_user_step",
+              "backend": os.environ["BENCHMARK_BACKEND"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "commit": os.environ["GITHUB_SHA"],
+              "runner_name": os.environ["RUNNER_NAME"],
+              "utc": datetime.now(UTC).isoformat(),
+          }, sort_keys=True), flush=True)
+          PY
