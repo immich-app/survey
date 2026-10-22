@@ -36,13 +36,13 @@ concurrency:
 
 jobs:
   frontend:
-    name: frontend / ${{ inputs.shape || 'basic' }} / trial ${{ inputs.trial || '1' }}
-    runs-on: ${{ inputs.shape == 'github' && 'ubuntu-latest' || format('yucca-cloudflare-{0}', inputs.shape || 'basic') }}
+    name: frontend / ${{ inputs.shape || 'lite' }} / trial ${{ inputs.trial || '1' }}
+    runs-on: ${{ inputs.shape == 'github' && 'ubuntu-latest' || format('yucca-cloudflare-{0}', inputs.shape || 'lite') }}
     timeout-minutes: 30
     env:
       CI: "true"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
-      BENCHMARK_SHAPE: ${{ inputs.shape || 'basic' }}
+      BENCHMARK_SHAPE: ${{ inputs.shape || 'lite' }}
       BENCHMARK_TRIAL: ${{ inputs.trial || '1' }}
     defaults:
       run:
@@ -91,7 +91,7 @@ jobs:
 
       - name: Measure setup and uncached frontend workload
         env:
-          FRONTEND_HELPER_SHA256: 3f1879ff20b73bb2320dd99a335a396d24348cfaa2d03395786a19c194d0994b
+          FRONTEND_HELPER_SHA256: d3639a16ec3eaf1f3d3edd42900e36119ddbf89560f0f62205c7099348e00478
         run: |
           python3 - <<'PY'
           import hashlib

@@ -151,7 +151,7 @@ class FrontendBenchmark:
         print(PREFIX + body, flush=True)
 
     def snapshot(self):
-        return {"children": resource.getrusage(resource.RUSAGE_CHILDREN), "cpu": counters(self.scope / "cpu.stat", CPU_KEYS), "memory_events": counters(self.scope / "memory.events", MEMORY_KEYS)}
+        return {"children": resource.getrusage(resource.RUSAGE_CHILDREN), "observer": resource.getrusage(resource.RUSAGE_SELF), "cpu": counters(self.scope / "cpu.stat", CPU_KEYS), "memory_events": counters(self.scope / "memory.events", MEMORY_KEYS)}
 
     def stage(self, name, arguments, timeout=STAGE_TIMEOUT_SECONDS):
         if name not in STAGES or not 0 < timeout <= STAGE_TIMEOUT_SECONDS:
@@ -201,6 +201,7 @@ class FrontendBenchmark:
         record = {"stage": name, "seconds": round(elapsed, 6), "exit_code": code, "timed_out": timed_out, "validation_failed": validation_failed, "oom_kill_observed": oom_kills > 0 if oom_kills is not None else None, "child_cpu": {"user_seconds": round(after["children"].ru_utime - before["children"].ru_utime, 6), "system_seconds": round(after["children"].ru_stime - before["children"].ru_stime, 6)}, "sampled_group_peak_rss_bytes": peak, "sampled_group_peak_processes": processes, "child_maxrss_bytes_before": before["children"].ru_maxrss * 1024, "child_maxrss_bytes_after": after["children"].ru_maxrss * 1024, "cgroup_cpu_delta": counter_delta(before["cpu"], after["cpu"]), "cgroup_memory_events_delta": memory_events, "cgroup_memory_peak_bytes": integer_file(self.scope / "memory.peak"), "cgroup_memory_current_bytes_after": integer_file(self.scope / "memory.current"), "workspace_filesystem_after": filesystem(self.workspace)}
         if tests is not None:
             record["tests"] = tests
+        record["observer_cpu"] = {"user_seconds": round(after["observer"].ru_utime - before["observer"].ru_utime, 6), "system_seconds": round(after["observer"].ru_stime - before["observer"].ru_stime, 6)}
         self.emit("stage", **record)
         log.unlink()
         if code or validation_failed:
@@ -221,13 +222,13 @@ class FrontendBenchmark:
                 raise WorkloadFailure()
         if any(key in self.environment for key in ["RAYON_NUM_THREADS", "NODE_OPTIONS"]):
             raise WorkloadFailure()
-        self.emit("environment", lock_sha256=lock, cache_policy={"actions_cache": False, "fresh_store": True, "fresh_metadata": True, "side_effects_cache": False, "workspace": "disk", "rayon_override": False, "integrity_checks": True, "lifecycle_scripts": True}, hardware={"uid": os.getuid(), "gid": os.getgid(), "architecture": platform.machine(), "kernel": platform.release(), "cpu_count": os.cpu_count(), "affinity": sorted(os.sched_getaffinity(0)), "cpu_models": sorted({line.split(":", 1)[1].strip() for line in read("/proc/cpuinfo").splitlines() if line.startswith("model name")}), "cgroup_cpu_max": read(self.scope / "cpu.max"), "cgroup_memory_max": read(self.scope / "memory.max"), "mem_total_bytes": next((int(line.split()[1]) * 1024 for line in read("/proc/meminfo").splitlines() if line.startswith("MemTotal:")), None), "workspace_filesystem": filesystem(self.workspace), "temporary_filesystem": filesystem(self.temp)}, measurement_notes={"sample_seconds": SAMPLE_SECONDS, "group_rss": "Sum of live process-group RSS; shared pages double counted and short-lived children may be missed", "cgroup_peak": "Lifetime cgroup high-water mark including runner and setup; never reset", "child_maxrss": "Cumulative largest-child high-water mark, not process-tree sum", "setup": "Image Node reused on Cloudflare; pinned complete archive on GitHub, same Node/pnpm/header versions; setup excluded from workload total"})
+        self.emit("environment", lock_sha256=lock, cache_policy={"actions_cache": False, "fresh_store": True, "fresh_metadata": True, "side_effects_cache": False, "workspace": "disk", "rayon_override": False, "integrity_checks": True, "lifecycle_scripts": True}, hardware={"uid": os.getuid(), "gid": os.getgid(), "architecture": platform.machine(), "kernel": platform.release(), "cpu_count": os.cpu_count(), "affinity": sorted(os.sched_getaffinity(0)), "cpu_models": sorted({line.split(":", 1)[1].strip() for line in read("/proc/cpuinfo").splitlines() if line.startswith("model name")}), "cgroup_cpu_max": read(self.scope / "cpu.max"), "cgroup_memory_max": read(self.scope / "memory.max"), "mem_total_bytes": next((int(line.split()[1]) * 1024 for line in read("/proc/meminfo").splitlines() if line.startswith("MemTotal:")), None), "workspace_filesystem": filesystem(self.workspace), "temporary_filesystem": filesystem(self.temp)}, measurement_notes={"sample_seconds": SAMPLE_SECONDS, "group_rss": "Sum of live process-group RSS; shared pages double counted and short-lived children may be missed", "cgroup_peak": "Lifetime cgroup high-water mark including runner and setup; never reset", "child_maxrss": "Cumulative largest-child high-water mark, not process-tree sum", "setup": "Existing Cloudflare image Node verified and reused; pinned complete archive when absent or on GitHub, same Node/pnpm/header versions; setup excluded from workload total"})
 
     def setup(self):
-        reuse = self.common["backend"] == "cloudflare"
-        archive, checksum = (HEADERS_ARCHIVE, HEADERS_SHA256) if reuse else (NODE_ARCHIVE, NODE_SHA256)
+        reuse = self.common["backend"] == "cloudflare" and shutil.which("node", path=self.environment.get("PATH", "")) is not None
         if reuse and self.version(["node", "--version"]) != NODE_VERSION:
             raise WorkloadFailure()
+        archive, checksum = (HEADERS_ARCHIVE, HEADERS_SHA256) if reuse else (NODE_ARCHIVE, NODE_SHA256)
         payload, node = self.directory / "node.tar.xz", self.directory / "node"
         node.mkdir()
         self.stage("setup_node_download", ["curl", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--retry", "2", "--connect-timeout", "10", "--max-time", "120", "--max-filesize", str(64 * 1024**2), NODE_BASE + archive, "--output", str(payload)], 420)
