@@ -1,0 +1,355 @@
+name: Yucca 200 native runner burst benchmark
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-burst-20261022
+  workflow_dispatch:
+    inputs:
+      shape:
+        description: Native small runner shape
+        required: true
+        type: choice
+        options:
+          - lite
+          - basic
+
+permissions: {}
+
+concurrency:
+  group: yucca-native-200-burst
+  cancel-in-progress: false
+
+jobs:
+  burst:
+    name: burst / ${{ inputs.shape || 'lite' }} / ${{ matrix.index }}
+    runs-on: ${{ format('yucca-cloudflare-{0}', inputs.shape || 'lite') }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 200
+      matrix:
+        index: [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34,
+          35,
+          36,
+          37,
+          38,
+          39,
+          40,
+          41,
+          42,
+          43,
+          44,
+          45,
+          46,
+          47,
+          48,
+          49,
+          50,
+          51,
+          52,
+          53,
+          54,
+          55,
+          56,
+          57,
+          58,
+          59,
+          60,
+          61,
+          62,
+          63,
+          64,
+          65,
+          66,
+          67,
+          68,
+          69,
+          70,
+          71,
+          72,
+          73,
+          74,
+          75,
+          76,
+          77,
+          78,
+          79,
+          80,
+          81,
+          82,
+          83,
+          84,
+          85,
+          86,
+          87,
+          88,
+          89,
+          90,
+          91,
+          92,
+          93,
+          94,
+          95,
+          96,
+          97,
+          98,
+          99,
+          100,
+          101,
+          102,
+          103,
+          104,
+          105,
+          106,
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126,
+          127,
+          128,
+          129,
+          130,
+          131,
+          132,
+          133,
+          134,
+          135,
+          136,
+          137,
+          138,
+          139,
+          140,
+          141,
+          142,
+          143,
+          144,
+          145,
+          146,
+          147,
+          148,
+          149,
+          150,
+          151,
+          152,
+          153,
+          154,
+          155,
+          156,
+          157,
+          158,
+          159,
+          160,
+          161,
+          162,
+          163,
+          164,
+          165,
+          166,
+          167,
+          168,
+          169,
+          170,
+          171,
+          172,
+          173,
+          174,
+          175,
+          176,
+          177,
+          178,
+          179,
+          180,
+          181,
+          182,
+          183,
+          184,
+          185,
+          186,
+          187,
+          188,
+          189,
+          190,
+          191,
+          192,
+          193,
+          194,
+          195,
+          196,
+          197,
+          198,
+          199,
+          200,
+        ]
+    env:
+      BURST_SHAPE: ${{ inputs.shape || 'lite' }}
+      BURST_INDEX: ${{ matrix.index }}
+      BURST_TRIAL_ID: 6ff061d0-4558-4700-bf12-927c087d3f45
+      BURST_BARRIER_URL: https://yucca-ci-burst-release-20261022.ian-b13.workers.dev/
+    steps:
+      - name: Record native readiness and hold until release
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          import urllib.error
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          POLL_SECONDS = 3
+          MAX_WAIT_SECONDS = 18 * 60
+          HTTP_TIMEOUT_SECONDS = 5
+          MAX_FAILURES = 10
+          MAX_BODY_BYTES = 1024
+          expected_trial = "6ff061d0-4558-4700-bf12-927c087d3f45"
+          expected_url = "https://yucca-ci-burst-release-20261022.ian-b13.workers.dev/"
+          started = time.monotonic()
+          common = {
+              "schema": 1, "index": int(os.environ["BURST_INDEX"]),
+              "shape": os.environ["BURST_SHAPE"], "trial_id": expected_trial,
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "workflow_commit": os.environ["GITHUB_SHA"],
+          }
+
+          def emit(kind, **fields):
+              print("YUCCA_BURST_JSON " + json.dumps({
+                  **common, "kind": kind,
+                  "utc": datetime.now(timezone.utc).isoformat(), **fields,
+              }, sort_keys=True), flush=True)
+
+          def read(path):
+              try:
+                  return Path(path).read_text().strip()
+              except OSError:
+                  return ""
+
+          def disk(path):
+              info = os.statvfs(path)
+              return {"total_bytes": info.f_blocks * info.f_frsize,
+                      "available_bytes": info.f_bavail * info.f_frsize}
+
+          def cgroup_scope():
+              root = Path("/sys/fs/cgroup")
+              relative = next((line.partition("::")[2] for line in read("/proc/self/cgroup").splitlines() if line.startswith("0::")), "")
+              current = (root / relative.lstrip("/")).resolve()
+              if not current.is_relative_to(root):
+                  return root
+              while current != root and not (current / "memory.max").is_file():
+                  current = current.parent
+              return current
+
+          def limit(path):
+              value = read(path)
+              return value if value == "max" or all(part.isdecimal() or part == "max" for part in value.split()) else "unknown"
+
+          if (os.environ["BURST_TRIAL_ID"] != expected_trial or
+                  os.environ["BURST_BARRIER_URL"] != expected_url or
+                  common["shape"] not in {"lite", "basic"} or
+                  not 1 <= common["index"] <= 200):
+              raise SystemExit("Burst configuration invalid")
+          scope = cgroup_scope()
+          emit("ready", hardware={
+              "affinity": sorted(os.sched_getaffinity(0)),
+              "cgroup_cpu_max": limit(scope / "cpu.max"),
+              "cgroup_memory_max": limit(scope / "memory.max"),
+              "mem_total_bytes": next((int(line.split()[1]) * 1024 for line in read("/proc/meminfo").splitlines() if line.startswith("MemTotal:")), None),
+              "workspace_filesystem": disk(os.environ["GITHUB_WORKSPACE"]),
+              "temporary_filesystem": disk(os.environ["RUNNER_TEMP"]),
+          })
+          request = urllib.request.Request(expected_url, headers={
+              "User-Agent": "yucca-ci-burst/0.1", "Cache-Control": "no-cache",
+          })
+          deadline = started + MAX_WAIT_SECONDS
+          polls, failures, consecutive_failures = 0, 0, 0
+          status = "wait_timeout"
+          while time.monotonic() < deadline:
+              polls += 1
+              try:
+                  with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                      raw = response.read(MAX_BODY_BYTES + 1)
+                      if response.status != 200 or len(raw) > MAX_BODY_BYTES:
+                          raise ValueError()
+                  body = json.loads(raw)
+                  if (not isinstance(body, dict) or
+                          set(body) != {"trial_id", "released", "expires_at"} or
+                          body["trial_id"] != expected_trial or
+                          type(body["released"]) is not bool or
+                          not isinstance(body["expires_at"], str)):
+                      raise ValueError()
+                  expires = datetime.fromisoformat(body["expires_at"].replace("Z", "+00:00"))
+                  if expires.utcoffset() is None:
+                      raise ValueError()
+              except (OSError, ValueError, urllib.error.URLError):
+                  failures += 1
+                  consecutive_failures += 1
+                  if consecutive_failures >= MAX_FAILURES:
+                      status = "barrier_unavailable"
+                      break
+              else:
+                  consecutive_failures = 0
+                  if datetime.now(timezone.utc) >= expires:
+                      status = "barrier_expired"
+                      break
+                  if body["released"]:
+                      status = "released"
+                      break
+              time.sleep(min(POLL_SECONDS, max(0, deadline - time.monotonic())))
+          emit("finished", status=status, exit_code=0 if status == "released" else 1,
+               wait_seconds=round(time.monotonic() - started, 6),
+               polls=polls, barrier_failures=failures)
+          raise SystemExit(0 if status == "released" else 1)
+          PY
