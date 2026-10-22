@@ -18,6 +18,10 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 SURVEY_COMMIT = "c1ff09222c1108ce0772b4d0a81559777edebc16"
 DEVTOOLS_COMMIT = "8e461d0adbab4662544fc47795aa6ed8c3267ce4"
 BACKEND_STATE_MAPPING = "existing_pr19_legacy_pages"
+STATE_PROVIDER_LOCK_AUGMENTATION = "existing_pr19_http_3_6_0"
+STATE_PROVIDER_LOCK_SOURCE_COMMIT = "12a766c6edf464b9e5ca2f7dc45f6e3e192f30a9"
+LEGACY_HTTP_LOCK = 'provider "registry.opentofu.org/hashicorp/http" {\n  version     = "3.6.0"\n  constraints = "3.6.0"\n  hashes = [\n    "h1:0n4RBz9zNw6TTddh5+x7E8L2+qzPXNwKhK4uoZ/DUwE=",\n    "h1:22Ob7lpzMBSqdrCvoFN5EgmhGPHPBovV/9qo0c/Cd+A=",\n    "h1:2IRBvmWOYrq/ooaYYn2i86jZb7iIUvlg0KlmOMfDHoQ=",\n    "h1:5mucXikk4OcW3un3u94QnMx4AB4Wfih+sXeMd5QxSNk=",\n    "h1:5oU7Zm+2gAVGmxqtJ9E8uTudUkYy/DEn/y3IWphdv4k=",\n    "h1:5w0R4b1/VSzpqQF1tXXPr/qmaQLPVRXamOmPKWFcTk4=",\n    "h1:AEVeJr8xGmwad+JUUQ833C3x5d4W+W2szF5DfwxYppw=",\n    "h1:CPHJ+0zQbS/cX1m55Y90jIOgf1jV3ocUUnqsXAh+9Eg=",\n    "h1:JPewnGDOJudNer5+ghqwXoaJkfot3QRq9uiEYvo+JHU=",\n    "h1:QzbluV2vQLxsJYxjpziQCmPndIoJ/UGS4/UHH/GpwUM=",\n    "h1:TjUNbUdqweRBq/ycQ4ixpNkx5qaYwpXEOn9QCpqNZP8=",\n    "h1:XNbcODP60ajj21N/OO7af8bBg1ltIsYkq9egn7BYbiY=",\n    "h1:tgrbgmX7WYQz9G9ncgu7TkpVB+RlLjJA/Rvp9KPlZH8=",\n    "h1:vLxthX/ZWsOZ+aHKbAMqmNKqD0K5f4nJ8ppy0Ioyup0=",\n    "h1:wZOdGBAZkY8OKEPjKz82j1HloAKOmmvtjWyTxM+I110=",\n    "zh:0f719fa5426bc883e9fa6abf7f6498e48025edafbc29015e2f5c028f1cca3b9d",\n    "zh:1b4d7dafefd6c61764b2f9ed6943ceb9a200dee3590d18747e3a5f6b20ce85e0",\n    "zh:1d23a712984866d29f7b07028a4e99c783c71f1a5dddf08bc3d4e7da9d91a1fa",\n    "zh:257d23d58c3bb024b6bc8eb88736eaf912e934ad47c639d0c3c742bddda849a1",\n    "zh:479860e1a5468f5e04013b9364c9496d7ed0804bf9a1acd8e07558d57609993d",\n    "zh:4cb5e681bf599b411b27c4a2c4066a5fb2ed79aaa3a1a3cb5a30002fec062ce9",\n    "zh:4fb35c3f643dae9f3670d719397a415f815a0b95f8ed7bd8a72f27a94ba78092",\n    "zh:59ba40825ab38db5b4a0989a2db0df35cc15d8984f898176011ba352f27d77b7",\n    "zh:61fc1252eb88088638f4c69ea4e2171cde2e5089fa632ac1e943b13787348f73",\n    "zh:7c5d6dd5f7cbc460e95d368be35c29b4e0402069b8912dbd5d1cd7fa9acef216",\n    "zh:7f76d756240d4284642f359ad470226e5378670239aadc366ef54d9d914d4d2e",\n    "zh:8133ad0814098177e0d067c816ccf1bf48bbadacd18f6f2c808c90447505723b",\n    "zh:c93be06269bb728f1968f8c50506de56c887017ac1d6e4be1f925651d8437eb6",\n    "zh:ef47b78a10a82e6cf53344a6a85a94041c28286c10a70541c564d762f1cfede0",\n    "zh:f5796a53a74999135bd9087aff50fddda59129d09b2f9b1902ff8c0c1e047e48",\n  ]\n}\n'
+LEGACY_HTTP_LOCK_SHA256 = "e4a186e70477208a008163f14768e0426c8e46fdd358d20885be8afdb31079c0"
 SHAPES = {"lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4", "github"}
 MODULES = ("modules/cloudflare/pages-project", "modules/cloudflare/static-pages", "modules/cloudflare/workers/survey")
 MODULE_FILES = ("pages-project/pages.tf", "static-pages/pages.tf", "workers/survey/worker.tf")
@@ -193,11 +197,6 @@ def execute(stage):
     environment.update({"PG_SKIP_SCHEMA_CREATION": "true", "PG_SKIP_TABLE_CREATION": "true", "PG_SKIP_INDEX_CREATION": "true", "PGOPTIONS": "-c default_transaction_read_only=on"})
     for key in ["TF_LOG", "TF_LOG_PATH", "TOFU_LOG", "TOFU_LOG_PATH", "TG_INPUTS_DEBUG"]:
         environment.pop(key, None)
-    if stage == "init" and environment.get("BENCHMARK_SHAPE") == "github":
-        result = subprocess.run(terraform_command(stage), env=environment, check=False)
-        if result.returncode != 0:
-            print("YUCCA_TERRAFORM_STATE_METADATA_JSON " + json.dumps(state_provider_metadata(environment), sort_keys=True), flush=True)
-        raise SystemExit(result.returncode)
     os.execvpe("terragrunt", terraform_command(stage), environment)
 
 
@@ -388,6 +387,15 @@ def map_existing_dev_state(deployment):
         path.write_text(text)
 
 
+def augment_existing_state_lock(deployment):
+    path = deployment / "modules/cloudflare/static-pages/.terraform.lock.hcl"
+    original = path.read_text()
+    if "hashicorp/http" in original or hashlib.sha256(LEGACY_HTTP_LOCK.encode()).hexdigest() != LEGACY_HTTP_LOCK_SHA256:
+        raise BenchmarkFailure()
+    path.write_text(original.rstrip() + "\n\n" + LEGACY_HTTP_LOCK)
+
+
+
 def resolve_tools(workspace):
     binaries = {}
     for command in ["tofu", "terragrunt"]:
@@ -406,7 +414,7 @@ def resolve_tools(workspace):
 
 
 def benchmark():
-    result = {**identity(os.environ), "backend_state_mapping": BACKEND_STATE_MAPPING, "success": False, "classification": "setup_failed", "stages": {}}
+    result = {**identity(os.environ), "backend_state_mapping": BACKEND_STATE_MAPPING, "state_provider_lock_augmentation": STATE_PROVIDER_LOCK_AUGMENTATION, "state_provider_lock_source_commit": STATE_PROVIDER_LOCK_SOURCE_COMMIT, "success": False, "classification": "setup_failed", "stages": {}}
     output = public_path() / "terraform-plan.json"
     try:
         workspace = Path(os.environ["GITHUB_WORKSPACE"]) / "survey"
@@ -423,6 +431,7 @@ def benchmark():
             scratch = Path(raw)
             prepare_copy(workspace, scratch)
             map_existing_dev_state(scratch / "deployment")
+            augment_existing_state_lock(scratch / "deployment")
             environment = {**os.environ, "PATH": tool_path, "ENVIRONMENT": "dev", "TF_VAR_app_name": "survey", "TF_VAR_stage": "pr-19", "TF_VAR_dist_dir": str(workspace / "backend/dist"), "TF_VAR_migrations_dir": str(workspace / "backend/migrations"), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0", "CHECKPOINT_DISABLE": "1", "TG_LOG_LEVEL": "warn", "NO_COLOR": "1", "OP_ACCOUNT": "immich.1password.com", "XDG_CACHE_HOME": str(scratch / "cache"), "TF_PLUGIN_CACHE_DIR": str(scratch / "provider-cache")}
             Path(environment["TF_PLUGIN_CACHE_DIR"]).mkdir(mode=0o700)
             for stage in ["init", "plan"]:
