@@ -1,0 +1,63 @@
+name: Yucca runner scheduling benchmark
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-scheduling-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-runner-scheduling-benchmark
+  cancel-in-progress: false
+
+jobs:
+  scheduling:
+    name: scheduling / ${{ matrix.backend }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+          - backend: github
+            runner: ubuntu-latest
+    env:
+      BENCHMARK_BACKEND: ${{ matrix.backend }}
+    steps:
+      - name: Record the first user step
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          from datetime import UTC, datetime
+
+          common = {
+              "schema": 1,
+              "backend": os.environ["BENCHMARK_BACKEND"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "commit": os.environ["GITHUB_SHA"],
+              "runner_name": os.environ["RUNNER_NAME"],
+          }
+
+          def emit(event, **fields):
+              print("YUCCA_SCHEDULING_JSON " + json.dumps({
+                  **common,
+                  "event": event,
+                  "utc": datetime.now(UTC).isoformat(),
+                  **fields,
+              }, sort_keys=True), flush=True)
+
+          emit("first_user_step", affinity=sorted(os.sched_getaffinity(0)))
+          started = time.perf_counter()
+          time.sleep(10)
+          emit("last_user_step", workload_seconds=round(time.perf_counter() - started, 6))
+          PY
