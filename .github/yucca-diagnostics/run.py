@@ -32,7 +32,7 @@ IO_KEYS = {"rchar", "wchar", "syscr", "syscw", "read_bytes", "write_bytes", "can
 CPU_KEYS = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal", "guest", "guest_nice")
 CGROUP_CPU_KEYS = {"usage_usec", "user_usec", "system_usec", "nr_periods", "nr_throttled", "throttled_usec", "nr_bursts", "burst_usec"}
 CGROUP_MEMORY_KEYS = {"low", "high", "max", "oom", "oom_kill", "oom_group_kill"}
-STAGES = {"network_npm_metadata_1", "network_npm_metadata_2", "network_npm_metadata_3", "network_node_archive", "tools_pnpm_install", "cpu_sha256_1", "cpu_sha256_4", "cpu_zlib_1", "cpu_zlib_4", "fs_small_workspace", "fs_small_shm", "fs_large_workspace", "pnpm_fetch", "pnpm_offline_no_scripts", "pnpm_offline_hardlink", "pnpm_offline_copy", "pnpm_offline_with_scripts", "pnpm_exec_verify_install", "pnpm_exec_verify_ignore"}
+STAGES = {"network_npm_metadata_1", "network_npm_metadata_2", "network_npm_metadata_3", "network_node_archive", "tools_pnpm_install", "cpu_sha256_1", "cpu_sha256_4", "cpu_zlib_1", "cpu_zlib_4", "fs_small_workspace", "fs_small_shm", "fs_large_workspace", "pnpm_fetch", "pnpm_offline_no_scripts", "pnpm_offline_hardlink", "pnpm_offline_copy", "pnpm_offline_rayon_1", "pnpm_offline_rayon_4", "pnpm_offline_with_scripts", "pnpm_exec_verify_install", "pnpm_exec_verify_ignore"}
 
 
 def read(path):
@@ -307,6 +307,13 @@ class Diagnostics:
             raise ProbeFailure()
         return details
 
+    def materialize(self, method, pool_threads, store):
+        if method not in {"auto", "hardlink", "copy"} or type(pool_threads) is not int or pool_threads not in {0, 1, 4}:
+            raise ProbeFailure()
+        extra = {"RAYON_NUM_THREADS": str(pool_threads)} if pool_threads else {}
+        result = self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--ignore-scripts", "--package-import-method=" + method, "--store-dir", str(store), "--reporter=ndjson"], 45, extra)
+        return {**result, "variant": "offline-no-scripts" if method == "auto" else "offline-" + method, "requested_import_method": method, "requested_pool_threads": pool_threads}
+
     def run(self):
         affinity = sorted(os.sched_getaffinity(0))
         if len(affinity) != 4 or os.getuid() == 0:
@@ -350,11 +357,11 @@ class Diagnostics:
                 shutil.rmtree(relative, ignore_errors=True)
         clean()
         self.stage("pnpm_fetch", lambda: {**self.command(["pnpm", "fetch", "--ignore-scripts", "--store-dir", str(store), "--reporter=ndjson"], 60), "variant": "fetch"})
-        methods = [("auto", "pnpm_offline_no_scripts"), ("hardlink", "pnpm_offline_hardlink"), ("copy", "pnpm_offline_copy")]
-        offset = (self.common["pair"] - 1) % len(methods)
-        for method, stage in methods[offset:] + methods[:offset]:
+        methods = [("auto", 0, "pnpm_offline_no_scripts"), ("hardlink", 0, "pnpm_offline_hardlink"), ("copy", 0, "pnpm_offline_copy"), ("auto", 1, "pnpm_offline_rayon_1"), ("auto", 4, "pnpm_offline_rayon_4")]
+        offset = ((self.common["pair"] - 1) * 2) % len(methods)
+        for method, pool_threads, stage in methods[offset:] + methods[:offset]:
             clean()
-            self.stage(stage, lambda method=method: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--ignore-scripts", "--package-import-method=" + method, "--store-dir", str(store), "--reporter=ndjson"], 45), "variant": "offline-no-scripts" if method == "auto" else "offline-" + method, "requested_import_method": method})
+            self.stage(stage, lambda method=method, pool_threads=pool_threads: self.materialize(method, pool_threads, store))
         clean()
         self.stage("pnpm_offline_with_scripts", lambda: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--store-dir", str(store), "--reporter=ndjson"], 45), "variant": "offline-with-scripts"})
         for value, name in [("install", "install"), ("false", "ignore")]:
