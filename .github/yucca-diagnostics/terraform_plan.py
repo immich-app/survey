@@ -67,6 +67,7 @@ DIAGNOSTIC_PATTERNS = {
     "readonly_insert": r"cannot execute insert [^\n]*read-only transaction",
     "readonly_update": r"cannot execute update [^\n]*read-only transaction",
     "readonly_delete": r"cannot execute delete [^\n]*read-only transaction",
+
 }
 
 
@@ -193,7 +194,10 @@ def execute(stage):
     for key in ["TF_LOG", "TF_LOG_PATH", "TOFU_LOG", "TOFU_LOG_PATH", "TG_INPUTS_DEBUG"]:
         environment.pop(key, None)
     if stage == "init" and environment.get("BENCHMARK_SHAPE") == "github":
-        print("YUCCA_TERRAFORM_STATE_METADATA_JSON " + json.dumps(state_provider_metadata(environment), sort_keys=True), flush=True)
+        result = subprocess.run(terraform_command(stage), env=environment, check=False)
+        if result.returncode != 0:
+            print("YUCCA_TERRAFORM_STATE_METADATA_JSON " + json.dumps(state_provider_metadata(environment), sort_keys=True), flush=True)
+        raise SystemExit(result.returncode)
     os.execvpe("terragrunt", terraform_command(stage), environment)
 
 
@@ -216,24 +220,20 @@ def provider_metadata(value):
 
 
 def state_provider_metadata(environment):
-    if shutil.which("psql", path=environment["PATH"]) is None:
-        return {"available": False}
     result = {"available": True, "units": {}}
-    targets = {"pages_project": "cloudflare_pages_project_futo_org_survey_dev", "static_pages": "cloudflare_futo_org_survey_devpr-19", "worker": "cloudflare_workers_futo_org_survey_devpr-19"}
-    for unit, schema in targets.items():
-        statement = 'SELECT jsonb_build_object(\'providers\', (SELECT jsonb_agg(DISTINCT r->>\'provider\') FROM jsonb_array_elements(s.data::jsonb->\'resources\') AS r), \'version\', s.data::jsonb->>\'terraform_version\') FROM "' + schema + '"."states" AS s WHERE s.name=\'default\' LIMIT 1;'
-        command = ["psql", "--no-psqlrc", "--no-password", "--tuples-only", "--no-align", "--set=ON_ERROR_STOP=1", "--command", statement]
-        try:
-            value = subprocess.run(command, env={**environment, "PGDATABASE": environment["TF_VAR_tf_state_postgres_conn_str"]}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20, check=False)
-        except subprocess.TimeoutExpired:
-            result["units"][unit] = {"return_code": 124}
-            continue
-        result["units"][unit] = {"return_code": value.returncode}
-        if value.returncode == 0 and len(value.stdout) <= READ_LIMIT_BYTES:
+    for unit, module in zip(["pages_project", "static_pages", "worker"], MODULES, strict=True):
+        command = ["terragrunt", "run", "providers", "--non-interactive", "--", "-no-color"]
+        with tempfile.TemporaryFile(mode="w+b") as output:
             try:
-                result["units"][unit].update(provider_metadata(json.loads(value.stdout)))
-            except ValueError:
-                pass
+                value = subprocess.run(command, cwd=Path(module), env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=45, check=False)
+            except subprocess.TimeoutExpired:
+                result["units"][unit] = {"return_code": 124}
+                continue
+            output.seek(0)
+            text = output.read(READ_LIMIT_BYTES).decode("utf-8", errors="replace")
+        addresses = re.findall(r'provider\[([a-z.]+/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)\]', text)
+        metadata = provider_metadata({"providers": ['provider["' + address + '"]' for address in addresses]})
+        result["units"][unit] = {"return_code": value.returncode, **metadata}
     return result
 
 
