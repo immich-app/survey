@@ -25,7 +25,7 @@ HEADERS_ARCHIVE = "node-v24.12.0-headers.tar.xz"
 HEADERS_SHA256 = "a432e8935507a98ec0fc4c93b48199e83b4bec5b8db7e0caedf058be0c5631bf"
 SHAPES = {"lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4", "github"}
 STAGE_TIMEOUT_SECONDS = 480
-SAMPLE_SECONDS = 0.1
+SAMPLE_SECONDS = 1.0
 TERMINATE_SECONDS = 2
 EXPECTED_TESTS = 488
 OUTPUT_LIMIT_BYTES = 256 * 1024
@@ -234,7 +234,7 @@ class FrontendBenchmark:
         self.stage("setup_node_download", ["curl", "--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--retry", "2", "--connect-timeout", "10", "--max-time", "120", "--max-filesize", str(64 * 1024**2), NODE_BASE + archive, "--output", str(payload)], 420)
         if hashlib.sha256(payload.read_bytes()).hexdigest() != checksum:
             raise WorkloadFailure()
-        self.stage("setup_node_extract", ["tar", "-xJf", str(payload), "--strip-components=1", "-C", str(node)], 60)
+        self.stage("setup_node_extract", ["tar", "-xJf", str(payload), "--strip-components=1", "-C", str(node)], STAGE_TIMEOUT_SECONDS)
         payload.unlink()
         if not reuse:
             self.environment["PATH"] = str(node / "bin") + os.pathsep + self.environment["PATH"]

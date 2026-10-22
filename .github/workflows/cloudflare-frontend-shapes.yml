@@ -91,7 +91,7 @@ jobs:
 
       - name: Measure setup and uncached frontend workload
         env:
-          FRONTEND_HELPER_SHA256: d3639a16ec3eaf1f3d3edd42900e36119ddbf89560f0f62205c7099348e00478
+          FRONTEND_HELPER_SHA256: f60da7ca8afc56ad22567500e9cf84bb01ee4f9127b29a944b5e603f20d56573
         run: |
           python3 - <<'PY'
           import hashlib
