@@ -1,0 +1,121 @@
+name: Yucca Cloudflare runner canary
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-canary-20261022
+  workflow_dispatch:
+    inputs:
+      wait_seconds:
+        description: Optional cancellation window, an integer from 0 to 120
+        required: true
+        type: number
+        default: 0
+      test_cache:
+        description: Restore or save a small native GitHub Actions cache
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-cloudflare-canary
+  cancel-in-progress: false
+
+jobs:
+  canary:
+    runs-on: yucca-cloudflare-canary
+    timeout-minutes: 5
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Exercise installed toolchains
+        run: |
+          set -euo pipefail
+          uname -a
+          node --version
+          npm --version
+          python3 --version
+          git --version
+          cc --version
+          git rev-parse --verify HEAD
+          node -e 'console.log("Node available CPUs:", require("node:os").availableParallelism())'
+          python3 -c 'import os; print("Python affinity CPUs:", len(os.sched_getaffinity(0)))'
+          cat > "$RUNNER_TEMP/yucca-canary.c" <<'C'
+          #include <stdio.h>
+          int main(void) { puts("Native compiler workload passed"); return 0; }
+          C
+          cc -std=c11 -Wall -Wextra -Werror "$RUNNER_TEMP/yucca-canary.c" -o "$RUNNER_TEMP/yucca-canary"
+          "$RUNNER_TEMP/yucca-canary"
+
+      - name: Restore the canary cache
+        if: ${{ github.event_name == 'push' || inputs.test_cache }}
+        id: cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/yucca-canary-cache
+          key: yucca-cloudflare-canary-v1-${{ runner.os }}-${{ runner.arch }}
+
+      - name: Verify or create the canary cache payload
+        if: ${{ github.event_name == 'push' || inputs.test_cache }}
+        env:
+          CACHE_DIRECTORY: ${{ runner.temp }}/yucca-canary-cache
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["CACHE_DIRECTORY"])
+          marker = directory / "marker.txt"
+          origin = directory / "originating-run.txt"
+          expected = "yucca-cloudflare-canary-v1\n"
+          hit = os.environ["CACHE_HIT"] == "true"
+          if hit:
+              if marker.read_text() != expected or not origin.read_text().strip().isdecimal():
+                  raise SystemExit("Restored cache payload was invalid")
+              print("Native cache restored from run", origin.read_text().strip())
+          else:
+              directory.mkdir(parents=True, exist_ok=True)
+              marker.write_text(expected)
+              origin.write_text(os.environ["GITHUB_RUN_ID"] + "\n")
+              print("Native cache miss; payload will be saved after this job succeeds")
+          PY
+
+      - name: Optional cancellation window
+        env:
+          WAIT_SECONDS: ${{ github.event_name == 'push' && '90' || inputs.wait_seconds || '0' }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os
+          import re
+          import signal
+          import sys
+          import time
+
+          raw = os.environ["WAIT_SECONDS"]
+          if re.fullmatch(r"(?:0|[1-9][0-9]{0,2})", raw) is None or int(raw) > 120:
+              raise SystemExit("wait_seconds must be an integer from 0 to 120")
+
+          def cancelled(signum, _frame):
+              print("Cancellation signal observed:", signal.Signals(signum).name, flush=True)
+              sys.exit(128 + signum)
+
+          signal.signal(signal.SIGTERM, cancelled)
+          signal.signal(signal.SIGINT, cancelled)
+          seconds = int(raw)
+          print(f"Cancellation window open for {seconds} seconds", flush=True)
+          time.sleep(seconds)
+          print("Cancellation window finished", flush=True)
+          PY
