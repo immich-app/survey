@@ -34,6 +34,19 @@ STAGE_NAMES = {"init", "plan"}
 FAILURES = {"success", "success_changes", "timeout", "memory_limit", "killed", "secret_resolution", "authentication", "backend_read_only_or_missing", "network_or_backend_connection", "provider_download", "provider_startup", "configuration", "command_failed", "setup_failed", "postgres_configuration"}
 SQLSTATES = {"25006", "42P01", "3F000", "3D000", "28P01", "28000", "42501", "08001", "08006"}
 DIAGNOSTIC_PATTERNS = {
+    "init_dependency_lock_changed": r"provider dependency changes detected",
+    "init_dependency_lock_inconsistent": r"inconsistent dependency lock file",
+    "init_provider_checksum": r"checksum|checksums",
+    "init_legacy_provider_address": r"invalid legacy provider address",
+    "init_backend_config": r"error configuring the backend|backend initialization required|backend configuration changed|failed to load backend",
+    "init_state_loading": r"error loading state|error refreshing state|error selecting workspace|failed to refresh state",
+    "init_state_version": r"state snapshot was created by|unsupported state file format|state format version|newer than the current",
+    "init_provider_cache": r"plugin cache directory|shared cache directory|shared cache",
+    "init_flags": r"failed to parse command.line flags|flag provided but not defined",
+    "init_configuration": r"invalid expression|missing required|invalid function argument|variables not allowed|unknown variable",
+    "init_providers_reached": r"initializing provider plugins",
+    "init_success_present": r"successfully initialized",
+    "error_marker": r"\berror\b",
     "postgres_readonly": r"read-only transaction",
     "postgres_missing_relation": r'relation "[^"\n]+" does not exist',
     "postgres_missing_schema": r'schema "[^"\n]+" does not exist',
@@ -204,6 +217,7 @@ def classify(return_code, text, timed_out=False, oom_kills=0):
 
 
 def diagnostic_codes(text):
+    text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
     return {"sqlstates": sorted({code for code in re.findall(r"\bSQLSTATE[\s:(]+([A-Z0-9]{5})\b", text, flags=re.IGNORECASE) if code in SQLSTATES}), "codes": sorted(name for name, pattern in DIAGNOSTIC_PATTERNS.items() if re.search(pattern, text, flags=re.IGNORECASE)), "modules": sorted(module for module in MODULES if module in text)}
 
 
@@ -234,10 +248,11 @@ def measure(command, cwd, environment, scope, timeout=COMMAND_TIMEOUT_SECONDS):
         wall = time.monotonic() - started
         after, usage_after = cgroup_snapshot(scope), resource.getrusage(resource.RUSAGE_CHILDREN)
         observer_after = resource.getrusage(resource.RUSAGE_SELF)
-        output.seek(max(0, output.tell() - READ_LIMIT_BYTES))
+        output_bytes = output.tell()
+        output.seek(max(0, output_bytes - READ_LIMIT_BYTES))
         private_text = output.read(READ_LIMIT_BYTES).decode("utf-8", errors="replace")
     memory_events = delta(before["memory_events"], after["memory_events"])
-    return {"wall_seconds": round(wall, 6), "return_code": process.returncode, "classification": classify(process.returncode, private_text, timed_out, memory_events.get("oom_kill", 0)), "diagnostics": diagnostic_codes(private_text), "child_usage": {key: round(getattr(usage_after, attribute) - getattr(usage_before, attribute), 6) for key, attribute in RUSAGE_FIELDS.items()}, "observer_user_cpu_seconds": round(observer_after.ru_utime - observer_before.ru_utime, 6), "observer_system_cpu_seconds": round(observer_after.ru_stime - observer_before.ru_stime, 6), "largest_child_maxrss_kib_before": usage_before.ru_maxrss, "largest_child_maxrss_kib_after": usage_after.ru_maxrss, "sampled_process_group_peak_rss_bytes": group_peak, "sampled_process_group_peak_count": process_peak, "sampled_cgroup_current_peak_bytes": cgroup_peak, "cgroup_lifetime_peak_before_bytes": before["memory_lifetime_peak_bytes"], "cgroup_lifetime_peak_after_bytes": after["memory_lifetime_peak_bytes"], "cgroup_cpu_delta": delta(before["cpu"], after["cpu"]), "cgroup_memory_events_delta": memory_events, "sample_count": samples, "sample_interval_seconds": SAMPLE_INTERVAL_SECONDS}
+    return {"wall_seconds": round(wall, 6), "return_code": process.returncode, "classification": classify(process.returncode, private_text, timed_out, memory_events.get("oom_kill", 0)), "diagnostics": diagnostic_codes(private_text), "private_output_bytes": output_bytes, "private_output_truncated": output_bytes > READ_LIMIT_BYTES, "child_usage": {key: round(getattr(usage_after, attribute) - getattr(usage_before, attribute), 6) for key, attribute in RUSAGE_FIELDS.items()}, "observer_user_cpu_seconds": round(observer_after.ru_utime - observer_before.ru_utime, 6), "observer_system_cpu_seconds": round(observer_after.ru_stime - observer_before.ru_stime, 6), "largest_child_maxrss_kib_before": usage_before.ru_maxrss, "largest_child_maxrss_kib_after": usage_after.ru_maxrss, "sampled_process_group_peak_rss_bytes": group_peak, "sampled_process_group_peak_count": process_peak, "sampled_cgroup_current_peak_bytes": cgroup_peak, "cgroup_lifetime_peak_before_bytes": before["memory_lifetime_peak_bytes"], "cgroup_lifetime_peak_after_bytes": after["memory_lifetime_peak_bytes"], "cgroup_cpu_delta": delta(before["cpu"], after["cpu"]), "cgroup_memory_events_delta": memory_events, "sample_count": samples, "sample_interval_seconds": SAMPLE_INTERVAL_SECONDS}
 
 
 def identity(environment):
