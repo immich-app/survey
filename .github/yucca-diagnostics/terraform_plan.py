@@ -27,7 +27,7 @@ MODULES = ("modules/cloudflare/pages-project", "modules/cloudflare/static-pages"
 MODULE_FILES = ("pages-project/pages.tf", "static-pages/pages.tf", "workers/survey/worker.tf")
 MARKS = {"checkout_complete", "tools_start", "tools_complete", "assets_ready"}
 COMMAND_TIMEOUT_SECONDS = 600
-SAMPLE_INTERVAL_SECONDS = 0.25
+SAMPLE_INTERVAL_SECONDS = 1.0
 READ_LIMIT_BYTES = 1024 * 1024
 CPU_COUNTERS = {"usage_usec", "user_usec", "system_usec", "nr_periods", "nr_throttled", "throttled_usec", "nr_bursts", "burst_usec"}
 MEMORY_COUNTERS = {"low", "high", "max", "oom", "oom_kill", "oom_group_kill"}
@@ -71,6 +71,24 @@ DIAGNOSTIC_PATTERNS = {
     "readonly_insert": r"cannot execute insert [^\n]*read-only transaction",
     "readonly_update": r"cannot execute update [^\n]*read-only transaction",
     "readonly_delete": r"cannot execute delete [^\n]*read-only transaction",
+    "plan_invalid_attribute": r"unsupported attribute|attempt to get attribute|object does not have an attribute|invalid index|missing resource instance key",
+    "plan_undeclared_reference": r"reference to undeclared|undeclared resource|undeclared input variable|undeclared local value|unknown variable|unsupported checkable object kind",
+    "plan_invalid_value": r"invalid value for|invalid function argument|invalid template interpolation|invalid operand|incorrect attribute value type|inconsistent conditional result types|invalid for_each argument|invalid count argument",
+    "plan_missing_argument": r"missing required argument|required attribute|required argument|no value for required variable",
+    "plan_provider_configuration": r"invalid provider configuration|provider configuration not present|provider configuration is required|invalid api token|invalid credentials",
+    "plan_provider_schema": r"failed to load plugin schemas|failed to obtain provider schema|failed to decode resource from state|unsupported attribute in state|resource instance managed by newer provider version|no schema available|no resource schema|failed to marshal state|failed to upgrade resource state|invalid resource type|unsupported resource type",
+    "plan_provider_inconsistent": r"provider produced inconsistent|invalid address to set|invalid target address",
+    "plan_api_request": r"error making request|failed to make|error sending request|error reading|error fetching|error getting|failed to fetch|failed to read|unexpected http|api error|status code|bad request|request failed",
+    "plan_api_authentication": r"forbidden|unauthorized|authentication error|permission denied|insufficient permissions|invalid access token|invalid token|403 forbidden|401 unauthorized",
+    "plan_http_401": r"(?:status(?: code)?[\s:=]+|http[/0-9.]*[\s:=]+)401\b|401 unauthorized",
+    "plan_http_403": r"(?:status(?: code)?[\s:=]+|http[/0-9.]*[\s:=]+)403\b|403 forbidden",
+    "plan_http_404": r"(?:status(?: code)?[\s:=]+|http[/0-9.]*[\s:=]+)404\b|404 not found",
+    "plan_data_http": r"error making request|error making http request|unexpected response status|failed to read http|request status",
+    "plan_api_missing": r"404 not found|not found|does not exist|could not find|cannot find",
+    "plan_external_command": r"external program execution failed|error running command|error running provisioner|local-exec provisioner error",
+    "plan_remote_state_output": r"unable to find remote state|unsupported attribute|outputs is object with no attributes|no stored state",
+    "plan_state_lock": r"error acquiring the state lock|state blob is already locked|failed to save state|error saving state|failed to persist state",
+    "plan_invalid_json": r"invalid character|unexpected end of json|json: cannot unmarshal|error decoding response|error parsing response",
 
 }
 
