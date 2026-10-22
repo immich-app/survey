@@ -17,6 +17,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 SURVEY_COMMIT = "c1ff09222c1108ce0772b4d0a81559777edebc16"
 DEVTOOLS_COMMIT = "8e461d0adbab4662544fc47795aa6ed8c3267ce4"
+BACKEND_STATE_MAPPING = "existing_pr19_legacy_pages"
 SHAPES = {"lite", "basic", "standard-1", "standard-2", "standard-3", "standard-4", "github"}
 MODULES = ("modules/cloudflare/pages-project", "modules/cloudflare/static-pages", "modules/cloudflare/workers/survey")
 MODULE_FILES = ("pages-project/pages.tf", "static-pages/pages.tf", "workers/survey/worker.tf")
@@ -279,6 +280,23 @@ def prepare_copy(source, target):
         path.write_text(text)
 
 
+def map_existing_dev_state(deployment):
+    replacements = {
+        "modules/cloudflare/pages-project/terragrunt.hcl": ("cloudflare_pages_project_futo_tech_", "cloudflare_pages_project_futo_org_"),
+        "modules/cloudflare/static-pages/terragrunt.hcl": ("cloudflare_futo_tech_", "cloudflare_futo_org_"),
+        "modules/cloudflare/static-pages/remote-state.tf": ("cloudflare_pages_project_futo_tech_", "cloudflare_pages_project_futo_org_"),
+    }
+    changes = []
+    for relative, (old, new) in replacements.items():
+        path = deployment / relative
+        text = path.read_text()
+        if text.count(old) != 1:
+            raise BenchmarkFailure()
+        changes.append((path, text.replace(old, new)))
+    for path, text in changes:
+        path.write_text(text)
+
+
 def resolve_tools(workspace):
     binaries = {}
     for command in ["tofu", "terragrunt"]:
@@ -297,7 +315,7 @@ def resolve_tools(workspace):
 
 
 def benchmark():
-    result = {**identity(os.environ), "success": False, "classification": "setup_failed", "stages": {}}
+    result = {**identity(os.environ), "backend_state_mapping": BACKEND_STATE_MAPPING, "success": False, "classification": "setup_failed", "stages": {}}
     output = public_path() / "terraform-plan.json"
     try:
         workspace = Path(os.environ["GITHUB_WORKSPACE"]) / "survey"
@@ -313,6 +331,7 @@ def benchmark():
         with tempfile.TemporaryDirectory(prefix=PRIVATE_PREFIX, dir=os.environ["RUNNER_TEMP"]) as raw:
             scratch = Path(raw)
             prepare_copy(workspace, scratch)
+            map_existing_dev_state(scratch / "deployment")
             environment = {**os.environ, "PATH": tool_path, "ENVIRONMENT": "dev", "TF_VAR_app_name": "survey", "TF_VAR_stage": "pr-19", "TF_VAR_dist_dir": str(workspace / "backend/dist"), "TF_VAR_migrations_dir": str(workspace / "backend/migrations"), "TF_IN_AUTOMATION": "1", "TF_INPUT": "0", "CHECKPOINT_DISABLE": "1", "TG_LOG_LEVEL": "warn", "NO_COLOR": "1", "OP_ACCOUNT": "immich.1password.com", "XDG_CACHE_HOME": str(scratch / "cache"), "TF_PLUGIN_CACHE_DIR": str(scratch / "provider-cache")}
             Path(environment["TF_PLUGIN_CACHE_DIR"]).mkdir(mode=0o700)
             for stage in ["init", "plan"]:
