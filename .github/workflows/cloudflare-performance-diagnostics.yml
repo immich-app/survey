@@ -1,0 +1,58 @@
+name: Yucca native runner performance diagnostics
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-diagnostics-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-performance-diagnostics
+  cancel-in-progress: false
+
+jobs:
+  diagnostics:
+    name: diagnostics / ${{ matrix.backend }} / pair ${{ matrix.pair }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 6
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 1
+          - backend: github
+            runner: ubuntu-latest
+            pair: 1
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 2
+          - backend: github
+            runner: ubuntu-latest
+            pair: 2
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 3
+          - backend: github
+            runner: ubuntu-latest
+            pair: 3
+    env:
+      CI: "true"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      BENCHMARK_BACKEND: ${{ matrix.backend }}
+      BENCHMARK_PAIR: ${{ matrix.pair }}
+    steps:
+      - name: Check out identical diagnostic revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Measure fixed CPU, filesystem, network and package phases
+        shell: bash
+        run: python3 .github/yucca-diagnostics/run.py
