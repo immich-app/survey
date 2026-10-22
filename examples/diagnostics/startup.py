@@ -14,6 +14,8 @@ from pathlib import Path
 
 MAX_BYTES = 8 * 1024 * 1024
 PERF_ROOT = Path("/work/state/runner-perf")
+REGIONS = {"AFR", "APAC", "EEUR", "ENAM", "WNAM", "ME", "OC", "SAM", "WEUR"}
+JOB_RENEWED_EVENT = "job_request_renewed"
 PERF_FIXED = {
     "RunnerProcessStarted": "listener_main_started",
     "SessionCreated": "session_created",
@@ -109,6 +111,8 @@ def parse_perf(raw, source):
     for line in raw.splitlines():
         counter, separator, timestamp = line.partition(":")
         event = PERF_FIXED.get(counter)
+        if re.fullmatch(r"JobRequestRenewed_[0-9]+", counter):
+            event = JOB_RENEWED_EVENT
         if event is None:
             for prefix, candidate in PERF_SUFFIX.items():
                 if re.fullmatch(re.escape(prefix) + r"_[0-9a-fA-F-]+", counter):
@@ -125,6 +129,22 @@ def parse_perf(raw, source):
                 }
             )
     return events
+
+
+def project_placement(value):
+    if not isinstance(value, dict):
+        return {}
+    result = {}
+    location = value.get("location")
+    if isinstance(location, str) and re.fullmatch(r"[A-Za-z]{3}[0-9]{0,2}", location):
+        result["location"] = location.lower()
+    region = value.get("region")
+    if isinstance(region, str) and region in REGIONS:
+        result["region"] = region
+    country = value.get("country_a2")
+    if isinstance(country, str) and re.fullmatch(r"[A-Z]{2}", country):
+        result["country_a2"] = country
+    return result
 
 
 def parse_trace(raw, source):
@@ -251,6 +271,13 @@ def capture():
         "events": sorted(events, key=lambda event: event["utc"]),
         "process_snapshot": metadata,
         "availability": availability,
+        "placement": project_placement(
+            {
+                "location": os.environ.get("CLOUDFLARE_LOCATION"),
+                "region": os.environ.get("CLOUDFLARE_REGION"),
+                "country_a2": os.environ.get("CLOUDFLARE_COUNTRY_A2"),
+            }
+        ),
     }
 
 

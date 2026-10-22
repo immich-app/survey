@@ -52,7 +52,7 @@ jobs:
       - name: Project fixed native diagnostic events
         shell: bash
         env:
-          STARTUP_HELPER_SHA256: 9128f97eb87c673c1eee82729ee1bad13cd54c1c34aeef04b1863493fdfa72bf
+          STARTUP_HELPER_SHA256: 70d95d4ca1f4ecbf699f16cd011b028bfdd006a044fbab4a8d7a70b779a290a4
         run: |
           python3 - <<'PY'
           import hashlib
