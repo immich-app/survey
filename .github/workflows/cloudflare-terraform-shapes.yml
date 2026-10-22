@@ -1,0 +1,174 @@
+name: Yucca Survey Terraform shape benchmark
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-terraform-shapes-20261022
+  workflow_dispatch:
+    inputs:
+      shape:
+        description: Native runner shape; every Cloudflare shape uses disk
+        required: true
+        type: choice
+        options: [
+          lite,
+          basic,
+          standard-1,
+          standard-2,
+          standard-3,
+          standard-4,
+          github,
+        ]
+      trial:
+        description: Sequential independent trial
+        required: true
+        default: "1"
+        type: choice
+        options: ["1", "2", "3"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-terraform-shapes
+  cancel-in-progress: false
+
+env:
+  CI: "true"
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+  MISE_TRUSTED_CONFIG_PATHS: ${{ github.workspace }}/survey/.mise/config.toml
+
+jobs:
+  assets:
+    name: Build fixed Survey assets on GitHub
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out immutable Survey source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: c1ff09222c1108ce0772b4d0a81559777edebc16
+          path: survey
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install Survey's pinned tools
+        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        with:
+          version: 2026.7.12
+          working_directory: survey
+          install_args: node pnpm
+          github_token: ${{ github.token }}
+          cache: false
+          cache_save: false
+
+      - name: Build immutable backend assets
+        working-directory: survey
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile
+          pnpm build:backend
+          test -s backend/dist/index.js
+          test -s backend/dist/sessions.js
+
+      - name: Share identical public worker modules
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: yucca-survey-worker-assets
+          path: |
+            survey/backend/dist/index.js
+            survey/backend/dist/sessions.js
+          if-no-files-found: error
+          retention-days: 1
+
+  plan:
+    name: Terraform plan / ${{ inputs.shape || 'lite' }} / trial ${{ inputs.trial || '1' }}
+    needs: assets
+    runs-on: ${{ fromJSON('{"lite":"yucca-cloudflare-lite","basic":"yucca-cloudflare-basic","standard-1":"yucca-cloudflare-standard-1","standard-2":"yucca-cloudflare-standard-2","standard-3":"yucca-cloudflare-standard-3","standard-4":"yucca-cloudflare-standard-4","github":"ubuntu-latest"}')[inputs.shape || 'lite'] }}
+    timeout-minutes: 25
+    env:
+      BENCHMARK_SHAPE: ${{ inputs.shape || 'lite' }}
+      BENCHMARK_TRIAL: ${{ inputs.trial || '1' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Record the first user script before any checkout
+        run: |
+          set -euo pipefail
+          umask 077
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+          value = {"first_step_at": datetime.now(timezone.utc).isoformat(timespec="microseconds")}
+          directory = Path(os.environ["RUNNER_TEMP"]) / "yucca-terraform-public"
+          directory.mkdir(mode=0o700)
+          (directory / "milestones.json").write_text(json.dumps(value, sort_keys=True) + "\n")
+          print("YUCCA_TERRAFORM_FIRST_STEP_JSON " + json.dumps(value, sort_keys=True), flush=True)
+          PY
+
+      - name: Check out the reviewed benchmark controller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: benchmark-control
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Check out immutable Survey source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: c1ff09222c1108ce0772b4d0a81559777edebc16
+          path: survey
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Verify the controller and begin tool setup timing
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'ef143b6f54da20269fc34bd10d13435a5e5a6ddd05983f6c4944db2084fa2b36  benchmark-control/.github/yucca-diagnostics/terraform_plan.py' | sha256sum --check --status
+          python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark checkout_complete
+          python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark tools_start
+
+      - name: Install pinned OpenTofu and Terragrunt without caches
+        uses: jdx/mise-action@dad1bfd3df957f44999b559dd69dc1671cb4e9ea # v4.2.1
+        with:
+          version: 2026.7.12
+          working_directory: survey
+          install_args: opentofu terragrunt
+          github_token: ${{ github.token }}
+          cache: false
+          cache_save: false
+
+      - name: Install pinned 1Password CLI
+        uses: 1password/install-cli-action@1a3160d5e9de1ae0803eaa08a88746f5ae3daa50 # v4.1.0
+        with:
+          version: 2.39.0
+
+      - name: Record tool setup completion
+        run: python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark tools_complete
+
+      - name: Restore the separately built immutable worker modules
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: yucca-survey-worker-assets
+          path: survey/backend/dist
+
+      - name: Record asset readiness
+        run: python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark assets_ready
+
+      - name: Measure read-only backend initialization and the actual plan
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_TF_DEV_ENV }}
+        run: python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py run
+
+      - name: Upload reviewed measurements only
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: terraform-${{ inputs.shape || 'lite' }}-${{ inputs.trial || '1' }}
+          path: ${{ runner.temp }}/yucca-terraform-public/*.json
+          if-no-files-found: warn
+          retention-days: 7
