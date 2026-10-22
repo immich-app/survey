@@ -33,6 +33,8 @@ PRIVATE_PREFIX = "yucca-terraform-private-"
 STAGE_NAMES = {"init", "plan"}
 FAILURES = {"success", "success_changes", "timeout", "memory_limit", "killed", "secret_resolution", "authentication", "backend_read_only_or_missing", "network_or_backend_connection", "provider_download", "provider_startup", "configuration", "command_failed", "setup_failed", "postgres_configuration"}
 SQLSTATES = {"25006", "42P01", "3F000", "3D000", "28P01", "28000", "42501", "08001", "08006"}
+PUBLIC_PROVIDERS = {"cloudflare/cloudflare", "hashicorp/random", "hashicorp/null", "hashicorp/archive", "hashicorp/local", "hashicorp/http", "hashicorp/external", "hashicorp/time", "hashicorp/tls", "hashicorp/dns", "integrations/github", "builtin/terraform"}
+PROVIDER_REGISTRIES = {"registry.opentofu.org", "registry.terraform.io", "terraform.io"}
 DIAGNOSTIC_PATTERNS = {
     "init_dependency_lock_changed": r"provider dependency changes detected",
     "init_dependency_lock_inconsistent": r"inconsistent dependency lock file",
@@ -190,7 +192,74 @@ def execute(stage):
     environment.update({"PG_SKIP_SCHEMA_CREATION": "true", "PG_SKIP_TABLE_CREATION": "true", "PG_SKIP_INDEX_CREATION": "true", "PGOPTIONS": "-c default_transaction_read_only=on"})
     for key in ["TF_LOG", "TF_LOG_PATH", "TOFU_LOG", "TOFU_LOG_PATH", "TG_INPUTS_DEBUG"]:
         environment.pop(key, None)
+    if stage == "init" and environment.get("BENCHMARK_SHAPE") == "github":
+        print("YUCCA_TERRAFORM_STATE_METADATA_JSON " + json.dumps(state_provider_metadata(environment), sort_keys=True), flush=True)
     os.execvpe("terragrunt", terraform_command(stage), environment)
+
+
+def provider_metadata(value):
+    result = {"providers": [], "registry_hosts": [], "unknown_provider_count": 0}
+    if not isinstance(value, dict) or not isinstance(value.get("providers"), list):
+        return result
+    for item in value["providers"][:32]:
+        match = re.fullmatch(r'(?:module\.[a-zA-Z0-9_.]+\.)?provider\["([a-z.]+)/([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)"\](?:\.[a-zA-Z0-9_]+)?', item) if isinstance(item, str) else None
+        if match and match[1] in PROVIDER_REGISTRIES and match[2] in PUBLIC_PROVIDERS:
+            result["providers"].append(match[2])
+            result["registry_hosts"].append(match[1])
+        else:
+            result["unknown_provider_count"] += 1
+    result["providers"] = sorted(set(result["providers"]))
+    result["registry_hosts"] = sorted(set(result["registry_hosts"]))
+    if isinstance(value.get("version"), str) and re.fullmatch(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,3}", value["version"]):
+        result["state_version"] = value["version"]
+    return result
+
+
+def state_provider_metadata(environment):
+    if shutil.which("psql", path=environment["PATH"]) is None:
+        return {"available": False}
+    result = {"available": True, "units": {}}
+    targets = {"pages_project": "cloudflare_pages_project_futo_org_survey_dev", "static_pages": "cloudflare_futo_org_survey_devpr-19", "worker": "cloudflare_workers_futo_org_survey_devpr-19"}
+    for unit, schema in targets.items():
+        statement = 'SELECT jsonb_build_object(\'providers\', (SELECT jsonb_agg(DISTINCT r->>\'provider\') FROM jsonb_array_elements(s.data::jsonb->\'resources\') AS r), \'version\', s.data::jsonb->>\'terraform_version\') FROM "' + schema + '"."states" AS s WHERE s.name=\'default\' LIMIT 1;'
+        command = ["psql", "--no-psqlrc", "--no-password", "--tuples-only", "--no-align", "--set=ON_ERROR_STOP=1", "--command", statement]
+        try:
+            value = subprocess.run(command, env={**environment, "PGDATABASE": environment["TF_VAR_tf_state_postgres_conn_str"]}, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, timeout=20, check=False)
+        except subprocess.TimeoutExpired:
+            result["units"][unit] = {"return_code": 124}
+            continue
+        result["units"][unit] = {"return_code": value.returncode}
+        if value.returncode == 0 and len(value.stdout) <= READ_LIMIT_BYTES:
+            try:
+                result["units"][unit].update(provider_metadata(json.loads(value.stdout)))
+            except ValueError:
+                pass
+    return result
+
+
+def project_state_metadata(value):
+    if not isinstance(value, dict) or not isinstance(value.get("available"), bool):
+        return {}
+    result = {"available": value["available"]}
+    if not isinstance(value.get("units"), dict):
+        return result
+    result["units"] = {}
+    for unit in ["pages_project", "static_pages", "worker"]:
+        source = value["units"].get(unit)
+        if not isinstance(source, dict):
+            continue
+        target = {}
+        for key, allowed in [("providers", PUBLIC_PROVIDERS), ("registry_hosts", PROVIDER_REGISTRIES)]:
+            if isinstance(source.get(key), list):
+                target[key] = sorted({item for item in source[key][:32] if isinstance(item, str) and item in allowed})
+        for key, minimum, maximum in [("return_code", -255, 255), ("unknown_provider_count", 0, 32)]:
+            number = source.get(key)
+            if type(number) is int and minimum <= number <= maximum:
+                target[key] = number
+        if isinstance(source.get("state_version"), str) and re.fullmatch(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,3}", source["state_version"]):
+            target["state_version"] = source["state_version"]
+        result["units"][unit] = target
+    return result
 
 
 def classify(return_code, text, timed_out=False, oom_kills=0):
@@ -218,7 +287,14 @@ def classify(return_code, text, timed_out=False, oom_kills=0):
 
 def diagnostic_codes(text):
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
-    return {"sqlstates": sorted({code for code in re.findall(r"\bSQLSTATE[\s:(]+([A-Z0-9]{5})\b", text, flags=re.IGNORECASE) if code in SQLSTATES}), "codes": sorted(name for name, pattern in DIAGNOSTIC_PATTERNS.items() if re.search(pattern, text, flags=re.IGNORECASE)), "modules": sorted(module for module in MODULES if module in text)}
+    result = {"sqlstates": sorted({code for code in re.findall(r"\bSQLSTATE[\s:(]+([A-Z0-9]{5})\b", text, flags=re.IGNORECASE) if code in SQLSTATES}), "codes": sorted(name for name, pattern in DIAGNOSTIC_PATTERNS.items() if re.search(pattern, text, flags=re.IGNORECASE)), "modules": sorted(module for module in MODULES if module in text)}
+    for line in text.splitlines():
+        if line.startswith("YUCCA_TERRAFORM_STATE_METADATA_JSON "):
+            try:
+                result["state_provider_metadata"] = project_state_metadata(json.loads(line.split(" ", 1)[1]))
+            except ValueError:
+                pass
+    return result
 
 
 def measure(command, cwd, environment, scope, timeout=COMMAND_TIMEOUT_SECONDS):
