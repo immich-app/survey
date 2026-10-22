@@ -1,0 +1,287 @@
+name: Yucca native four-CPU runner workload benchmark
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-benchmark-matched-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-runner-benchmark-matched
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: benchmark / ${{ matrix.backend }} / pair ${{ matrix.pair }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 1
+          - backend: github
+            runner: ubuntu-latest
+            pair: 1
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 2
+          - backend: github
+            runner: ubuntu-latest
+            pair: 2
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 3
+          - backend: github
+            runner: ubuntu-latest
+            pair: 3
+    env:
+      CI: "true"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      BENCHMARK_BACKEND: ${{ matrix.backend }}
+      BENCHMARK_PAIR: ${{ matrix.pair }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the identical benchmark revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Prepare identical tools outside the measured workload
+        run: |
+          set -euo pipefail
+          benchmark_tools="$RUNNER_TEMP/yucca-benchmark-tools"
+          mkdir -p "$benchmark_tools/node" "$benchmark_tools/bin"
+          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+            https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz \
+            -o "$benchmark_tools/node.tar.xz"
+          printf '%s  %s\n' bdebee276e58d0ef5448f3d5ac12c67daa963dd5e0a9bb621a53d1cefbc852fd \
+            "$benchmark_tools/node.tar.xz" | sha256sum --check -
+          tar -xJf "$benchmark_tools/node.tar.xz" --strip-components=1 -C "$benchmark_tools/node"
+          ln -s "$benchmark_tools/node/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js" \
+            "$benchmark_tools/bin/node-gyp"
+          export PATH="$benchmark_tools/bin:$benchmark_tools/node/bin:$PATH"
+          timeout 90 npm install --prefix "$benchmark_tools/pnpm" --cache "$benchmark_tools/npm-cache" --no-audit --no-fund pnpm@12.4.2
+          printf '%s\n' "$benchmark_tools/bin" "$benchmark_tools/node/bin" \
+            "$benchmark_tools/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+          printf 'npm_config_nodedir=%s\n' "$benchmark_tools/node" >> "$GITHUB_ENV"
+
+      - name: Measure native four-CPU uncached install, build and tests
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import resource
+          import shutil
+          import signal
+          import subprocess
+          import sys
+          import tempfile
+          import threading
+          import time
+
+          workspace = Path.cwd()
+          scratch = Path(tempfile.mkdtemp(prefix="yucca-matched-", dir=os.environ["RUNNER_TEMP"]))
+          store = scratch / "store"
+          cache = scratch / "pnpm-cache"
+          state = scratch / "pnpm-state"
+          os.environ.update({
+              "XDG_CACHE_HOME": str(scratch / "xdg-cache"),
+              "XDG_CONFIG_HOME": str(scratch / "xdg-config"),
+              "XDG_DATA_HOME": str(scratch / "xdg-data"),
+              "XDG_STATE_HOME": str(scratch / "xdg-state"),
+              "PNPM_HOME": str(scratch / "pnpm-home"),
+              "PNPM_CONFIG_CACHE_DIR": str(cache),
+              "PNPM_CONFIG_STATE_DIR": str(state),
+              "PNPM_CONFIG_STORE_DIR": str(store),
+              "PNPM_CONFIG_SIDE_EFFECTS_CACHE": "false",
+              "npm_config_cache": str(scratch / "npm-cache"),
+          })
+          common = {
+              "schema": 1,
+              "backend": os.environ["BENCHMARK_BACKEND"],
+              "pair": int(os.environ["BENCHMARK_PAIR"]),
+              "commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+          }
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("| Store | Stage | Seconds | Sampled group peak RSS MiB | Exit |\n|---|---|---:|---:|---:|\n")
+
+          def emit(kind, **fields):
+              print("YUCCA_BENCHMARK_JSON " + json.dumps({**common, "kind": kind, **fields}, sort_keys=True), flush=True)
+
+          def read_optional(path):
+              try:
+                  return Path(path).read_text().strip()
+              except OSError:
+                  return None
+
+
+          def memory_cgroup():
+              memberships = read_optional("/proc/self/cgroup") or ""
+              relative = next((line.split("::", 1)[1] for line in memberships.splitlines() if line.startswith("0::")), None)
+              root = Path("/sys/fs/cgroup")
+              current = root / relative.lstrip("/") if relative is not None else None
+              while current is not None and current.is_relative_to(root):
+                  if (current / "memory.peak").exists():
+                      return current
+                  current = current.parent if current != root else None
+              return None
+
+          memory_scope = memory_cgroup()
+
+          def cgroup_memory_value(name):
+              value = read_optional(memory_scope / name) if memory_scope is not None else None
+              return int(value) if value is not None and value.isdecimal() else None
+
+          class GroupMemorySampler:
+              def __init__(self, group):
+                  self.group = group
+                  self.peak_bytes = 0
+                  self.peak_processes = 0
+                  self.stop_requested = threading.Event()
+                  self.thread = threading.Thread(target=self.sample, daemon=True)
+                  self.thread.start()
+
+              def sample(self):
+                  page_size = os.sysconf("SC_PAGE_SIZE")
+                  while not self.stop_requested.is_set():
+                      total = 0
+                      processes = 0
+                      for entry in Path("/proc").iterdir():
+                          if not entry.name.isdecimal():
+                              continue
+                          stat = read_optional(entry / "stat")
+                          if stat is None or ") " not in stat:
+                              continue
+                          fields = stat.rsplit(") ", 1)[1].split()
+                          try:
+                              if int(fields[2]) != self.group:
+                                  continue
+                              total += max(0, int(fields[21])) * page_size
+                              processes += 1
+                          except (ValueError, IndexError):
+                              continue
+                      if total > self.peak_bytes:
+                          self.peak_bytes = total
+                          self.peak_processes = processes
+                      self.stop_requested.wait(0.1)
+
+              def finish(self):
+                  self.stop_requested.set()
+                  self.thread.join()
+
+          cpuinfo = read_optional("/proc/cpuinfo") or ""
+          models = sorted({line.split(":", 1)[1].strip() for line in cpuinfo.splitlines() if line.startswith("model name")})
+          meminfo = read_optional("/proc/meminfo") or ""
+          memory = next((int(line.split()[1]) * 1024 for line in meminfo.splitlines() if line.startswith("MemTotal:")), None)
+          affinity = sorted(os.sched_getaffinity(0))
+          if len(affinity) != 4:
+              raise SystemExit("The native runner does not expose exactly four available CPUs")
+          if os.getuid() == 0:
+              raise SystemExit("The native workload must use its normal non-root runner user")
+          if common["backend"] == "cloudflare" and (memory is None or not 0.9 * 12 * 1024**3 <= memory <= 1.1 * 12 * 1024**3):
+              raise SystemExit("The Cloudflare VM does not match its nominal 12 GiB memory class")
+          disk = shutil.disk_usage(workspace)
+          node_version = subprocess.check_output(["node", "--version"], text=True).strip()
+          pnpm_version = subprocess.check_output(["pnpm", "--version"], text=True).strip()
+          package_manager = json.loads(Path("package.json").read_text())["packageManager"].split("+", 1)[0]
+          if node_version != "v24.12.0" or pnpm_version != "12.4.2" or package_manager != "pnpm@12.4.2":
+              raise SystemExit("Pinned benchmark tool versions do not match the repository")
+          for setting, expected in {"storeDir": store, "cacheDir": cache, "stateDir": state}.items():
+              actual = subprocess.check_output(["pnpm", "config", "get", setting], text=True).strip()
+              if Path(actual).resolve() != expected.resolve():
+                  raise SystemExit("Package cache isolation configuration was not applied")
+          if subprocess.check_output(["pnpm", "config", "get", "sideEffectsCache"], text=True).strip() != "false":
+              raise SystemExit("Native build side-effects cache was not disabled")
+          emit("environment",
+              node=node_version,
+              pnpm=pnpm_version,
+              lock_sha256=hashlib.sha256(Path("pnpm-lock.yaml").read_bytes()).hexdigest(),
+              cache_policy={"actions_cache": False, "fresh_store": True, "fresh_metadata": True, "side_effects_cache": False, "modes": ["cold"]},
+              nominal={"cpu": 4, "memory_gib": 12, "disk_gb": 20} if common["backend"] == "cloudflare" else {"cpu": 4, "memory_gb": 16, "disk_gb": 14},
+              hardware={
+                  "native_shape": "standard-4" if common["backend"] == "cloudflare" else "public-ubuntu-latest",
+                  "artificial_resource_limits": False,
+                  "uid": os.getuid(),
+                  "gid": os.getgid(),
+                  "memory_measurement": {
+                      "sample_interval_seconds": 0.1,
+                      "group_rss": "Sum of live command process-group RSS; shared pages double counted; short peaks or processes leaving the group can be missed",
+                      "observer_cpu": "Parent sampling overhead is included in wall time and excluded from child CPU counters; host process counts can differ",
+                      "child_maxrss": "Linux cumulative largest-child peak RSS before/after; not a process-tree sum or isolated per-stage peak",
+                      "cgroup_memory_peak": "Current cgroup lifetime high-water mark; can include runner/setup/earlier stages; no reset",
+                      "cgroup_scope": str(memory_scope) if memory_scope is not None else None,
+                  },
+                  "os_release": read_optional("/etc/os-release"),
+                  "kernel": platform.release(),
+                  "architecture": platform.machine(),
+                  "cpu_model": models,
+                  "cpu_count": os.cpu_count(),
+                  "affinity": affinity,
+                  "cgroup_cpu_max": read_optional("/sys/fs/cgroup/cpu.max"),
+                  "cgroup_memory_max": read_optional("/sys/fs/cgroup/memory.max"),
+                  "mem_total_bytes": memory,
+                  "disk_total_bytes": disk.total,
+                  "disk_free_bytes": disk.free,
+              })
+
+          def clean_outputs():
+              for relative in ["node_modules", "backend/node_modules", ".svelte-kit", "build", "backend/dist"]:
+                  shutil.rmtree(workspace / relative, ignore_errors=True)
+
+          def measure(mode, stage, command, timeout):
+              before = resource.getrusage(resource.RUSAGE_CHILDREN)
+              started = time.perf_counter()
+              process = subprocess.Popen(command, start_new_session=True)
+              sampler = GroupMemorySampler(process.pid)
+              try:
+                  exit_code = process.wait(timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  os.killpg(process.pid, signal.SIGTERM)
+                  try:
+                      process.wait(timeout=5)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(process.pid, signal.SIGKILL)
+                      process.wait()
+                  exit_code = 124
+              elapsed = time.perf_counter() - started
+              sampler.finish()
+              after = resource.getrusage(resource.RUSAGE_CHILDREN)
+              emit("stage", mode=mode, stage=stage, seconds=round(elapsed, 6), exit_code=exit_code,
+                   user_cpu_seconds=round(after.ru_utime - before.ru_utime, 6),
+                   system_cpu_seconds=round(after.ru_stime - before.ru_stime, 6),
+                   sampled_group_peak_rss_bytes=sampler.peak_bytes,
+                   sampled_group_peak_rss_processes=sampler.peak_processes,
+                   child_maxrss_bytes_before=before.ru_maxrss * 1024,
+                   child_maxrss_bytes_after=after.ru_maxrss * 1024,
+                   cgroup_memory_peak_bytes=cgroup_memory_value("memory.peak"),
+                   cgroup_memory_current_bytes_after=cgroup_memory_value("memory.current"))
+              with summary.open("a") as target:
+                  target.write(f"| {mode} | {stage} | {elapsed:.3f} | {sampler.peak_bytes / 1024**2:.1f} | {exit_code} |\n")
+              if exit_code:
+                  raise SystemExit(exit_code)
+              return elapsed
+
+          clean_outputs()
+          for directory in [store, cache, state]:
+              shutil.rmtree(directory, ignore_errors=True)
+          total = measure("cold", "install", ["pnpm", "install", "--frozen-lockfile", "--store-dir", str(store)], 180)
+          total += measure("cold", "build_frontend", ["pnpm", "run", "build:frontend"], 90)
+          total += measure("cold", "unit_tests", ["pnpm", "test"], 60)
+          emit("stage", mode="cold", stage="total", seconds=round(total, 6), exit_code=0)
+          PY
