@@ -32,7 +32,7 @@ IO_KEYS = {"rchar", "wchar", "syscr", "syscw", "read_bytes", "write_bytes", "can
 CPU_KEYS = ("user", "nice", "system", "idle", "iowait", "irq", "softirq", "steal", "guest", "guest_nice")
 CGROUP_CPU_KEYS = {"usage_usec", "user_usec", "system_usec", "nr_periods", "nr_throttled", "throttled_usec", "nr_bursts", "burst_usec"}
 CGROUP_MEMORY_KEYS = {"low", "high", "max", "oom", "oom_kill", "oom_group_kill"}
-STAGES = {"network_npm_metadata_1", "network_npm_metadata_2", "network_npm_metadata_3", "network_node_archive", "tools_pnpm_install", "cpu_sha256_1", "cpu_sha256_4", "cpu_zlib_1", "cpu_zlib_4", "fs_small_workspace", "fs_small_shm", "fs_large_workspace", "pnpm_fetch", "pnpm_offline_no_scripts", "pnpm_offline_with_scripts", "pnpm_exec_verify_install", "pnpm_exec_verify_ignore"}
+STAGES = {"network_npm_metadata_1", "network_npm_metadata_2", "network_npm_metadata_3", "network_node_archive", "tools_pnpm_install", "cpu_sha256_1", "cpu_sha256_4", "cpu_zlib_1", "cpu_zlib_4", "fs_small_workspace", "fs_small_shm", "fs_large_workspace", "pnpm_fetch", "pnpm_offline_no_scripts", "pnpm_offline_hardlink", "pnpm_offline_copy", "pnpm_offline_with_scripts", "pnpm_exec_verify_install", "pnpm_exec_verify_ignore"}
 
 
 def read(path):
@@ -76,6 +76,26 @@ def delta(before, after):
     return {key: after[key] - before[key] for key in before.keys() & after.keys()}
 
 
+def progress_events(lines):
+    counts = {key: 0 for key in ["resolved", "fetched", "downloaded", "imported"]}
+    methods = {key: 0 for key in ["clone", "hardlink", "copy"]}
+    lifecycle = 0
+    for line in lines:
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(event, dict):
+            continue
+        status, method = event.get("status"), event.get("method")
+        if event.get("name") == "pnpm:progress" and isinstance(status, str) and status in counts:
+            counts[status] += 1
+        if event.get("name") == "pnpm:progress" and status == "imported" and isinstance(method, str) and method in methods:
+            methods[method] += 1
+        lifecycle += event.get("name") == "pnpm:lifecycle"
+    return {"progress_counts": counts, "lifecycle_events": lifecycle, "import_method_counts": methods}
+
+
 def resources(before, after):
     result = {who: {key: round(getattr(after[who], attribute) - getattr(before[who], attribute), 6) for key, attribute in RUSAGE_FIELDS.items()} for who in ["self", "children"]}
     result.update({key + "_delta": delta(before[key], after[key]) for key in ["proc_io", "cpu_ticks", "cgroup_cpu", "cgroup_memory_events"]})
@@ -94,7 +114,10 @@ def filesystem(path):
         mount = fields[4].replace("\\040", " ")
         if path.is_relative_to(mount) and (match is None or len(mount) > len(match["mountpoint"])):
             separator = fields.index("-")
-            match = {"mountpoint": mount, "fstype": fields[separator + 1], "device": fields[2], "options": [option for option in fields[5].split(",") if option in {"rw", "ro", "relatime", "noatime", "strictatime", "nosuid", "nodev", "noexec", "sync", "async", "lazytime"}]}
+            options = fields[5].split(",") + fields[separator + 3].split(",")
+            safe = {"rw", "ro", "relatime", "noatime", "strictatime", "nosuid", "nodev", "noexec", "sync", "async", "lazytime", "ssd", "nossd", "space_cache", "space_cache=v2", "nodatacow", "datasum", "nodatasum", "autodefrag", "discard", "discard=async", "nodiscard", "delalloc", "nodelalloc", "barrier", "nobarrier", "data=ordered", "data=journal", "data=writeback"}
+            projected = sorted({option for option in options if option in safe or re.fullmatch(r"compress(?:-force)?=(?:zstd|zlib|lzo)(?::[0-9]{1,2})?|(?:commit|metadata_ratio|max_inline)=[0-9]{1,6}", option)})
+            match = {"mountpoint": mount, "fstype": fields[separator + 1], "device": fields[2], "options": projected}
     return {**(match or {}), "block_bytes": info.f_frsize, "total_bytes": info.f_blocks * info.f_frsize, "available_bytes": info.f_bavail * info.f_frsize, "files": info.f_files, "files_free": info.f_ffree}
 
 
@@ -225,7 +248,7 @@ class Diagnostics:
             resident = max(0, int(fields[21])) * os.sysconf("SC_PAGE_SIZE")
             rss += resident
             previous = self.processes.get(pid, {})
-            self.processes[pid] = {"pid": pid, "comm": name if name in allowed else "other", "user_cpu_seconds": int(fields[11]) / os.sysconf("SC_CLK_TCK"), "system_cpu_seconds": int(fields[12]) / os.sysconf("SC_CLK_TCK"), "minflt": int(fields[7]), "majflt": int(fields[9]), "rss_peak_bytes": max(previous.get("rss_peak_bytes", 0), resident), **counters(Path("/proc") / str(pid) / "io", IO_KEYS)}
+            self.processes[pid] = {"pid": pid, "comm": name if name in allowed else "other", "user_cpu_seconds": int(fields[11]) / os.sysconf("SC_CLK_TCK"), "system_cpu_seconds": int(fields[12]) / os.sysconf("SC_CLK_TCK"), "minflt": int(fields[7]), "majflt": int(fields[9]), "rss_peak_bytes": max(previous.get("rss_peak_bytes", 0), resident), "threads_peak": max(previous.get("threads_peak", 0), int(fields[17])), "sample_count": previous.get("sample_count", 0) + 1, **counters(Path("/proc") / str(pid) / "io", IO_KEYS)}
             pending.extend(int(value) for value in read(Path("/proc") / str(pid) / "task" / str(pid) / "children").split() if value.isdecimal())
         self.tree_peak = max(self.tree_peak, rss)
 
@@ -251,21 +274,9 @@ class Diagnostics:
                     pass
         if code:
             raise ProbeFailure(code)
-        counts = {key: 0 for key in ["resolved", "fetched", "downloaded", "imported"]}
-        lifecycle = 0
         with log.open("rb") as source:
             lines = source.read(2 * 1024**2).decode(errors="replace").splitlines()
-        for line in lines:
-            try:
-                event = json.loads(line)
-            except ValueError:
-                continue
-            if not isinstance(event, dict):
-                continue
-            if event.get("name") == "pnpm:progress" and event.get("status") in counts:
-                counts[event["status"]] += 1
-            lifecycle += event.get("name") == "pnpm:lifecycle"
-        return {"progress_counts": counts, "lifecycle_events": lifecycle}
+        return progress_events(lines)
 
     def network(self, target, attempt):
         archive = target == "node_archive"
@@ -338,9 +349,12 @@ class Diagnostics:
             for relative in ["node_modules", "backend/node_modules", ".svelte-kit", "build", "backend/dist"]:
                 shutil.rmtree(relative, ignore_errors=True)
         clean()
-        self.stage("pnpm_fetch", lambda: {**self.command(["pnpm", "fetch", "--store-dir", str(store), "--reporter=ndjson"], 60), "variant": "fetch"})
-        clean()
-        self.stage("pnpm_offline_no_scripts", lambda: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--ignore-scripts", "--store-dir", str(store), "--reporter=ndjson"], 45), "variant": "offline-no-scripts"})
+        self.stage("pnpm_fetch", lambda: {**self.command(["pnpm", "fetch", "--ignore-scripts", "--store-dir", str(store), "--reporter=ndjson"], 60), "variant": "fetch"})
+        methods = [("auto", "pnpm_offline_no_scripts"), ("hardlink", "pnpm_offline_hardlink"), ("copy", "pnpm_offline_copy")]
+        offset = (self.common["pair"] - 1) % len(methods)
+        for method, stage in methods[offset:] + methods[:offset]:
+            clean()
+            self.stage(stage, lambda method=method: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--ignore-scripts", "--package-import-method=" + method, "--store-dir", str(store), "--reporter=ndjson"], 45), "variant": "offline-no-scripts" if method == "auto" else "offline-" + method, "requested_import_method": method})
         clean()
         self.stage("pnpm_offline_with_scripts", lambda: {**self.command(["pnpm", "install", "--offline", "--frozen-lockfile", "--store-dir", str(store), "--reporter=ndjson"], 45), "variant": "offline-with-scripts"})
         for value, name in [("install", "install"), ("false", "ignore")]:
