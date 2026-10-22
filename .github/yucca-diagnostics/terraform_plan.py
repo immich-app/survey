@@ -39,6 +39,7 @@ FAILURES = {"success", "success_changes", "timeout", "memory_limit", "killed", "
 SQLSTATES = {"25006", "42P01", "3F000", "3D000", "28P01", "28000", "42501", "08001", "08006"}
 PUBLIC_PROVIDERS = {"cloudflare/cloudflare", "hashicorp/random", "hashicorp/null", "hashicorp/archive", "hashicorp/local", "hashicorp/http", "hashicorp/external", "hashicorp/time", "hashicorp/tls", "hashicorp/dns", "integrations/github", "builtin/terraform"}
 PROVIDER_REGISTRIES = {"registry.opentofu.org", "registry.terraform.io", "terraform.io"}
+RESOURCE_TYPES = {"cloudflare_pages_project", "cloudflare_pages_domain", "cloudflare_record", "cloudflare_dns_record", "cloudflare_worker", "cloudflare_worker_version", "cloudflare_workers_script", "cloudflare_workers_deployment", "cloudflare_workers_route", "cloudflare_d1_database", "cloudflare_r2_bucket", "cloudflare_workers_kv_namespace", "cloudflare_workers_custom_domain", "random_password", "null_resource", "terraform_data", "http"}
 DIAGNOSTIC_PATTERNS = {
     "init_dependency_lock_changed": r"provider dependency changes detected",
     "init_dependency_lock_inconsistent": r"inconsistent dependency lock file",
@@ -305,6 +306,10 @@ def classify(return_code, text, timed_out=False, oom_kills=0):
 def diagnostic_codes(text):
     text = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
     result = {"sqlstates": sorted({code for code in re.findall(r"\bSQLSTATE[\s:(]+([A-Z0-9]{5})\b", text, flags=re.IGNORECASE) if code in SQLSTATES}), "codes": sorted(name for name, pattern in DIAGNOSTIC_PATTERNS.items() if re.search(pattern, text, flags=re.IGNORECASE)), "modules": sorted(module for module in MODULES if module in text)}
+    contexts = [text[max(0, match.start() - 256):match.start() + 4096] for match in list(re.finditer(r"\bError:", text))[:16]]
+    result["api_error_codes"] = sorted({int(value) for context in contexts for pair in re.findall(r'(?i)\bcode["\s:=]+([0-9]{1,5})\b|\(([0-9]{4,5})\)', context) for value in pair if value})
+    result["error_resource_types"] = sorted({kind for context in contexts for kind in RESOURCE_TYPES if re.search(r'\bwith\s+[^\n]*\b' + re.escape(kind) + r'\.', context)})
+    result["error_modules"] = sorted({module for line in text.splitlines() if re.search(r"\berror\b", line, flags=re.IGNORECASE) for module in MODULES if module in line})
     for line in text.splitlines():
         if line.startswith("YUCCA_TERRAFORM_STATE_METADATA_JSON "):
             try:
