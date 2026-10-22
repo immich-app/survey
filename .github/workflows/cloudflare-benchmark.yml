@@ -1,0 +1,184 @@
+name: Yucca runner workload benchmark
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-benchmark-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-runner-benchmark
+  cancel-in-progress: false
+
+jobs:
+  benchmark:
+    name: benchmark / ${{ matrix.backend }} / pair ${{ matrix.pair }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 1
+          - backend: github
+            runner: ubuntu-latest
+            pair: 1
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 2
+          - backend: github
+            runner: ubuntu-latest
+            pair: 2
+          - backend: cloudflare
+            runner: yucca-cloudflare-canary
+            pair: 3
+          - backend: github
+            runner: ubuntu-latest
+            pair: 3
+    env:
+      CI: "true"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      BENCHMARK_BACKEND: ${{ matrix.backend }}
+      BENCHMARK_PAIR: ${{ matrix.pair }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out the identical benchmark revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Prepare identical tools outside the measured workload
+        run: |
+          set -euo pipefail
+          benchmark_tools="$RUNNER_TEMP/yucca-benchmark-tools"
+          mkdir -p "$benchmark_tools/node" "$benchmark_tools/bin"
+          curl --fail --silent --show-error --location --retry 2 --max-time 60 \
+            https://nodejs.org/dist/v24.12.0/node-v24.12.0-linux-x64.tar.xz \
+            -o "$benchmark_tools/node.tar.xz"
+          printf '%s  %s\n' bdebee276e58d0ef5448f3d5ac12c67daa963dd5e0a9bb621a53d1cefbc852fd \
+            "$benchmark_tools/node.tar.xz" | sha256sum --check -
+          tar -xJf "$benchmark_tools/node.tar.xz" --strip-components=1 -C "$benchmark_tools/node"
+          ln -s "$benchmark_tools/node/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js" \
+            "$benchmark_tools/bin/node-gyp"
+          export PATH="$benchmark_tools/bin:$benchmark_tools/node/bin:$PATH"
+          timeout 90 npm install --prefix "$benchmark_tools/pnpm" --no-audit --no-fund pnpm@12.4.2
+          printf '%s\n' "$benchmark_tools/bin" "$benchmark_tools/node/bin" \
+            "$benchmark_tools/pnpm/node_modules/.bin" >> "$GITHUB_PATH"
+          printf 'npm_config_nodedir=%s\n' "$benchmark_tools/node" >> "$GITHUB_ENV"
+
+      - name: Measure cold and warm package-store workloads
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import platform
+          import resource
+          import shutil
+          import signal
+          import subprocess
+          import sys
+          import time
+
+          workspace = Path.cwd()
+          store = Path(os.environ["RUNNER_TEMP"]) / "yucca-benchmark-store"
+          common = {
+              "schema": 1,
+              "backend": os.environ["BENCHMARK_BACKEND"],
+              "pair": int(os.environ["BENCHMARK_PAIR"]),
+              "commit": os.environ["GITHUB_SHA"],
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+          }
+          summary = Path(os.environ["GITHUB_STEP_SUMMARY"])
+          summary.write_text("| Store | Stage | Seconds | Exit |\n|---|---|---:|---:|\n")
+
+          def emit(kind, **fields):
+              print("YUCCA_BENCHMARK_JSON " + json.dumps({**common, "kind": kind, **fields}, sort_keys=True), flush=True)
+
+          def read_optional(path):
+              try:
+                  return Path(path).read_text().strip()
+              except OSError:
+                  return None
+
+          cpuinfo = read_optional("/proc/cpuinfo") or ""
+          models = sorted({line.split(":", 1)[1].strip() for line in cpuinfo.splitlines() if line.startswith("model name")})
+          meminfo = read_optional("/proc/meminfo") or ""
+          memory = next((int(line.split()[1]) * 1024 for line in meminfo.splitlines() if line.startswith("MemTotal:")), None)
+          disk = shutil.disk_usage(workspace)
+          node_version = subprocess.check_output(["node", "--version"], text=True).strip()
+          pnpm_version = subprocess.check_output(["pnpm", "--version"], text=True).strip()
+          package_manager = json.loads(Path("package.json").read_text())["packageManager"].split("+", 1)[0]
+          if node_version != "v24.12.0" or pnpm_version != "12.4.2" or package_manager != "pnpm@12.4.2":
+              raise SystemExit("Pinned benchmark tool versions do not match the repository")
+          emit("environment",
+              node=node_version,
+              pnpm=pnpm_version,
+              lock_sha256=hashlib.sha256(Path("pnpm-lock.yaml").read_bytes()).hexdigest(),
+              nominal={"cpu": 2, "memory_gib": 8, "disk_gb": 16} if common["backend"] == "cloudflare" else {"cpu": 4, "memory_gb": 16, "disk_gb": 14},
+              hardware={
+                  "os_release": read_optional("/etc/os-release"),
+                  "kernel": platform.release(),
+                  "architecture": platform.machine(),
+                  "cpu_model": models,
+                  "cpu_count": os.cpu_count(),
+                  "affinity": sorted(os.sched_getaffinity(0)),
+                  "cgroup_cpu_max": read_optional("/sys/fs/cgroup/cpu.max"),
+                  "cgroup_memory_max": read_optional("/sys/fs/cgroup/memory.max"),
+                  "mem_total_bytes": memory,
+                  "disk_total_bytes": disk.total,
+                  "disk_free_bytes": disk.free,
+              })
+
+          def clean_outputs():
+              for relative in ["node_modules", "backend/node_modules", ".svelte-kit", "build", "backend/dist"]:
+                  shutil.rmtree(workspace / relative, ignore_errors=True)
+
+          def measure(mode, stage, command, timeout):
+              before = resource.getrusage(resource.RUSAGE_CHILDREN)
+              started = time.perf_counter()
+              process = subprocess.Popen(command, start_new_session=True)
+              try:
+                  exit_code = process.wait(timeout=timeout)
+              except subprocess.TimeoutExpired:
+                  os.killpg(process.pid, signal.SIGTERM)
+                  try:
+                      process.wait(timeout=5)
+                  except subprocess.TimeoutExpired:
+                      os.killpg(process.pid, signal.SIGKILL)
+                      process.wait()
+                  exit_code = 124
+              elapsed = time.perf_counter() - started
+              after = resource.getrusage(resource.RUSAGE_CHILDREN)
+              emit("stage", mode=mode, stage=stage, seconds=round(elapsed, 6), exit_code=exit_code,
+                   user_cpu_seconds=round(after.ru_utime - before.ru_utime, 6),
+                   system_cpu_seconds=round(after.ru_stime - before.ru_stime, 6))
+              with summary.open("a") as target:
+                  target.write(f"| {mode} | {stage} | {elapsed:.3f} | {exit_code} |\n")
+              if exit_code:
+                  raise SystemExit(exit_code)
+              return elapsed
+
+          shutil.rmtree(store, ignore_errors=True)
+          for mode in ["cold", "warm"]:
+              clean_outputs()
+              install = ["pnpm", "install", "--frozen-lockfile", "--store-dir", str(store)]
+              if mode == "warm":
+                  install.append("--offline")
+              total = measure(mode, "install", install, 180 if mode == "cold" else 120)
+              total += measure(mode, "build_frontend", ["pnpm", "run", "build:frontend"], 90)
+              total += measure(mode, "unit_tests", ["pnpm", "test"], 60)
+              emit("stage", mode=mode, stage="total", seconds=round(total, 6), exit_code=0)
+          PY
