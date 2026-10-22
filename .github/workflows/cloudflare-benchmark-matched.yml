@@ -1,16 +1,16 @@
-name: Yucca native four-CPU runner workload benchmark
+name: Yucca native four-CPU runner Rayon-4 workload benchmark
 
 on:
   push:
     branches:
-      - ci/cloudflare-benchmark-matched-20261022
+      - ci/cloudflare-benchmark-rayon-20261022
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: yucca-runner-benchmark-matched
+  group: yucca-runner-benchmark-rayon
   cancel-in-progress: false
 
 jobs:
@@ -43,6 +43,7 @@ jobs:
             pair: 3
     env:
       CI: "true"
+      RAYON_NUM_THREADS: "4"
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
       BENCHMARK_BACKEND: ${{ matrix.backend }}
       BENCHMARK_PAIR: ${{ matrix.pair }}
