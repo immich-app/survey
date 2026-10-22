@@ -1,0 +1,33 @@
+name: Yucca RAM workspace validation
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-ram-validation-20261022
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-ram-workspace-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: ram workspace / cloudflare
+    runs-on: yucca-cloudflare-canary
+    timeout-minutes: 3
+    steps:
+      - name: Check out the reviewed validation revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Validate RAM paths and post-exec privileges
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' 'f036f63473d198df4418042c2f708a711d5f3d19a05e9aff9e34ca8c58d11194  .github/yucca-diagnostics/ram_workspace.py' | sha256sum --check --status
+          python3 .github/yucca-diagnostics/ram_workspace.py
