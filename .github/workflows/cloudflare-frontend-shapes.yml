@@ -1,0 +1,122 @@
+name: Yucca native disk frontend shape benchmark
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-frontend-shapes-20261022
+  workflow_dispatch:
+    inputs:
+      shape:
+        description: Native runner shape
+        required: true
+        type: choice
+        options:
+          - lite
+          - basic
+          - standard-1
+          - standard-2
+          - standard-3
+          - standard-4
+          - github
+      trial:
+        description: Replicate number (retain failures)
+        required: true
+        type: choice
+        options:
+          - "1"
+          - "2"
+          - "3"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-native-shape-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  frontend:
+    name: frontend / ${{ inputs.shape || 'lite' }} / trial ${{ inputs.trial || '1' }}
+    runs-on: ${{ inputs.shape == 'github' && 'ubuntu-latest' || format('yucca-cloudflare-{0}', inputs.shape || 'lite') }}
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      BENCHMARK_SHAPE: ${{ inputs.shape || 'lite' }}
+      BENCHMARK_TRIAL: ${{ inputs.trial || '1' }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Record first user step before actions and tools
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          print("YUCCA_FRONTEND_SHAPES_JSON " + json.dumps({
+              "schema": 1, "kind": "first_user_step", "workload": "survey-frontend",
+              "shape": os.environ["BENCHMARK_SHAPE"], "trial": int(os.environ["BENCHMARK_TRIAL"]),
+              "backend": "github" if os.environ["BENCHMARK_SHAPE"] == "github" else "cloudflare",
+              "workflow_commit": os.environ["GITHUB_SHA"],
+              "source_commit": "d9a9649227cb44844506be8f25ee5d6bf6846b5f",
+              "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "utc": datetime.now(timezone.utc).isoformat(),
+          }, sort_keys=True), flush=True)
+          PY
+
+      - name: Check out the fixed previous frontend workload
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: d9a9649227cb44844506be8f25ee5d6bf6846b5f
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Measure setup and uncached frontend workload
+        env:
+          FRONTEND_HELPER_SHA256: 3f1879ff20b73bb2320dd99a335a396d24348cfaa2d03395786a19c194d0994b
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import os
+          import re
+          import urllib.request
+
+          revision = os.environ["GITHUB_SHA"]
+          if re.fullmatch(r"[0-9a-f]{40}", revision) is None:
+              raise SystemExit("Frontend helper revision invalid")
+          request = urllib.request.Request(
+              f"https://raw.githubusercontent.com/immich-app/survey/{revision}/examples/diagnostics/frontend_shapes.py",
+              headers={"User-Agent": "yucca-ci-frontend-shapes/0.1"},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=30) as response:
+                  source = response.read(65537)
+          except (OSError, ValueError):
+              raise SystemExit("Frontend helper unavailable") from None
+          if len(source) > 65536 or hashlib.sha256(source).hexdigest() != os.environ["FRONTEND_HELPER_SHA256"]:
+              raise SystemExit("Frontend helper checksum mismatch")
+          exec(compile(source, "frontend_shapes", "exec"), {"__name__": "__main__"})
+          PY
+
+      - name: Record final native job status
+        if: ${{ always() }}
+        env:
+          BENCHMARK_JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          status = os.environ["BENCHMARK_JOB_STATUS"]
+          print("YUCCA_FRONTEND_SHAPES_JSON " + json.dumps({
+              "schema": 1, "kind": "last_user_step", "workload": "survey-frontend",
+              "shape": os.environ["BENCHMARK_SHAPE"], "trial": int(os.environ["BENCHMARK_TRIAL"]),
+              "backend": "github" if os.environ["BENCHMARK_SHAPE"] == "github" else "cloudflare",
+              "workflow_commit": os.environ["GITHUB_SHA"],
+              "source_commit": "d9a9649227cb44844506be8f25ee5d6bf6846b5f",
+              "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "utc": datetime.now(timezone.utc).isoformat(),
+              "job_status": status if status in {"success", "failure", "cancelled", "skipped"} else "unknown",
+          }, sort_keys=True), flush=True)
+          PY
