@@ -82,12 +82,12 @@ jobs:
           retention-days: 1
 
   plan:
-    name: Terraform plan / ${{ inputs.shape || 'lite' }} / trial ${{ inputs.trial || '1' }}
+    name: Terraform plan / ${{ inputs.shape || 'github' }} / trial ${{ inputs.trial || '1' }}
     needs: assets
-    runs-on: ${{ fromJSON('{"lite":"yucca-cloudflare-lite","basic":"yucca-cloudflare-basic","standard-1":"yucca-cloudflare-standard-1","standard-2":"yucca-cloudflare-standard-2","standard-3":"yucca-cloudflare-standard-3","standard-4":"yucca-cloudflare-standard-4","github":"ubuntu-latest"}')[inputs.shape || 'lite'] }}
+    runs-on: ${{ fromJSON('{"lite":"yucca-cloudflare-lite","basic":"yucca-cloudflare-basic","standard-1":"yucca-cloudflare-standard-1","standard-2":"yucca-cloudflare-standard-2","standard-3":"yucca-cloudflare-standard-3","standard-4":"yucca-cloudflare-standard-4","github":"ubuntu-latest"}')[inputs.shape || 'github'] }}
     timeout-minutes: 25
     env:
-      BENCHMARK_SHAPE: ${{ inputs.shape || 'lite' }}
+      BENCHMARK_SHAPE: ${{ inputs.shape || 'github' }}
       BENCHMARK_TRIAL: ${{ inputs.trial || '1' }}
     defaults:
       run:
@@ -128,7 +128,7 @@ jobs:
       - name: Verify the controller and begin tool setup timing
         run: |
           set -euo pipefail
-          printf '%s\n' 'ef143b6f54da20269fc34bd10d13435a5e5a6ddd05983f6c4944db2084fa2b36  benchmark-control/.github/yucca-diagnostics/terraform_plan.py' | sha256sum --check --status
+          printf '%s\n' '8bc44cdc9e391421309b06e48959cc04b819524b93f1111cea2e35d837e9e37f  benchmark-control/.github/yucca-diagnostics/terraform_plan.py' | sha256sum --check --status
           python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark checkout_complete
           python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark tools_start
 
@@ -168,7 +168,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: terraform-${{ inputs.shape || 'lite' }}-${{ inputs.trial || '1' }}
+          name: terraform-${{ inputs.shape || 'github' }}-${{ inputs.trial || '1' }}
           path: ${{ runner.temp }}/yucca-terraform-public/*.json
           if-no-files-found: warn
           retention-days: 7

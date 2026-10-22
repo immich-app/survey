@@ -31,6 +31,27 @@ PUBLIC_DIRECTORY = "yucca-terraform-public"
 PRIVATE_PREFIX = "yucca-terraform-private-"
 STAGE_NAMES = {"init", "plan"}
 FAILURES = {"success", "success_changes", "timeout", "memory_limit", "killed", "secret_resolution", "authentication", "backend_read_only_or_missing", "network_or_backend_connection", "provider_download", "provider_startup", "configuration", "command_failed", "setup_failed", "postgres_configuration"}
+SQLSTATES = {"25006", "42P01", "3F000", "3D000", "28P01", "28000", "42501", "08001", "08006"}
+DIAGNOSTIC_PATTERNS = {
+    "postgres_readonly": r"read-only transaction",
+    "postgres_missing_relation": r'relation "[^"\n]+" does not exist',
+    "postgres_missing_schema": r'schema "[^"\n]+" does not exist',
+    "postgres_missing_database": r'database "[^"\n]+" does not exist',
+    "postgres_missing_role": r'role "[^"\n]+" does not exist',
+    "postgres_authentication": r"password authentication failed",
+    "postgres_ssl": r"ssl is not enabled|no pg_hba.conf entry",
+    "filesystem_missing_file": r"no such file or directory|failed to read file",
+    "workspace_missing": r"no stored state was found|workspace[^\n]*does not exist",
+    "provider_installation": r"failed to install provider|failed to query available provider packages",
+    "module_download": r"error downloading modules|failed to download module|failed to get existing workspaces",
+    "unsupported_argument": r"unsupported argument|unsupported block type|unrecognized flag",
+    "op_secret_lookup": r"unable to resolve secret|could not find item|not currently signed in",
+    "backend_initialization": r"error initializing backend|error inspecting states in the|failed to get existing workspaces|failed to load state|failed to configure",
+    "readonly_create": r"cannot execute create [^\n]*read-only transaction",
+    "readonly_insert": r"cannot execute insert [^\n]*read-only transaction",
+    "readonly_update": r"cannot execute update [^\n]*read-only transaction",
+    "readonly_delete": r"cannot execute delete [^\n]*read-only transaction",
+}
 
 
 class BenchmarkFailure(Exception):
@@ -181,6 +202,10 @@ def classify(return_code, text, timed_out=False, oom_kills=0):
     return next((name for name, needles in patterns if any(needle in text for needle in needles)), "command_failed")
 
 
+def diagnostic_codes(text):
+    return {"sqlstates": sorted({code for code in re.findall(r"\bSQLSTATE[\s:(]+([A-Z0-9]{5})\b", text, flags=re.IGNORECASE) if code in SQLSTATES}), "codes": sorted(name for name, pattern in DIAGNOSTIC_PATTERNS.items() if re.search(pattern, text, flags=re.IGNORECASE)), "modules": sorted(module for module in MODULES if module in text)}
+
+
 def measure(command, cwd, environment, scope, timeout=COMMAND_TIMEOUT_SECONDS):
     before, usage_before = cgroup_snapshot(scope), resource.getrusage(resource.RUSAGE_CHILDREN)
     observer_before = resource.getrusage(resource.RUSAGE_SELF)
@@ -211,7 +236,7 @@ def measure(command, cwd, environment, scope, timeout=COMMAND_TIMEOUT_SECONDS):
         output.seek(max(0, output.tell() - READ_LIMIT_BYTES))
         private_text = output.read(READ_LIMIT_BYTES).decode("utf-8", errors="replace")
     memory_events = delta(before["memory_events"], after["memory_events"])
-    return {"wall_seconds": round(wall, 6), "return_code": process.returncode, "classification": classify(process.returncode, private_text, timed_out, memory_events.get("oom_kill", 0)), "child_usage": {key: round(getattr(usage_after, attribute) - getattr(usage_before, attribute), 6) for key, attribute in RUSAGE_FIELDS.items()}, "observer_user_cpu_seconds": round(observer_after.ru_utime - observer_before.ru_utime, 6), "observer_system_cpu_seconds": round(observer_after.ru_stime - observer_before.ru_stime, 6), "largest_child_maxrss_kib_before": usage_before.ru_maxrss, "largest_child_maxrss_kib_after": usage_after.ru_maxrss, "sampled_process_group_peak_rss_bytes": group_peak, "sampled_process_group_peak_count": process_peak, "sampled_cgroup_current_peak_bytes": cgroup_peak, "cgroup_lifetime_peak_before_bytes": before["memory_lifetime_peak_bytes"], "cgroup_lifetime_peak_after_bytes": after["memory_lifetime_peak_bytes"], "cgroup_cpu_delta": delta(before["cpu"], after["cpu"]), "cgroup_memory_events_delta": memory_events, "sample_count": samples, "sample_interval_seconds": SAMPLE_INTERVAL_SECONDS}
+    return {"wall_seconds": round(wall, 6), "return_code": process.returncode, "classification": classify(process.returncode, private_text, timed_out, memory_events.get("oom_kill", 0)), "diagnostics": diagnostic_codes(private_text), "child_usage": {key: round(getattr(usage_after, attribute) - getattr(usage_before, attribute), 6) for key, attribute in RUSAGE_FIELDS.items()}, "observer_user_cpu_seconds": round(observer_after.ru_utime - observer_before.ru_utime, 6), "observer_system_cpu_seconds": round(observer_after.ru_stime - observer_before.ru_stime, 6), "largest_child_maxrss_kib_before": usage_before.ru_maxrss, "largest_child_maxrss_kib_after": usage_after.ru_maxrss, "sampled_process_group_peak_rss_bytes": group_peak, "sampled_process_group_peak_count": process_peak, "sampled_cgroup_current_peak_bytes": cgroup_peak, "cgroup_lifetime_peak_before_bytes": before["memory_lifetime_peak_bytes"], "cgroup_lifetime_peak_after_bytes": after["memory_lifetime_peak_bytes"], "cgroup_cpu_delta": delta(before["cpu"], after["cpu"]), "cgroup_memory_events_delta": memory_events, "sample_count": samples, "sample_interval_seconds": SAMPLE_INTERVAL_SECONDS}
 
 
 def identity(environment):
