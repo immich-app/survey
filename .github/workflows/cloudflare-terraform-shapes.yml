@@ -128,7 +128,7 @@ jobs:
       - name: Verify the controller and begin tool setup timing
         run: |
           set -euo pipefail
-          printf '%s\n' 'ca375e9a173ab97576ac16b3d42346d876797cb3017db46fa5004c8e8577bded  benchmark-control/.github/yucca-diagnostics/terraform_plan.py' | sha256sum --check --status
+          printf '%s\n' '272c64cea7d5ffa2b14d31809ae238286ec5582cc15a19bd308b2782da0bce29  benchmark-control/.github/yucca-diagnostics/terraform_plan.py' | sha256sum --check --status
           python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark checkout_complete
           python3 benchmark-control/.github/yucca-diagnostics/terraform_plan.py mark tools_start
 

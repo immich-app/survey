@@ -342,7 +342,10 @@ def measure(command, cwd, environment, scope, timeout=COMMAND_TIMEOUT_SECONDS):
                     pass
                 process.wait()
                 break
-            time.sleep(SAMPLE_INTERVAL_SECONDS)
+            try:
+                process.wait(timeout=max(0.001, min(SAMPLE_INTERVAL_SECONDS, timeout - (time.monotonic() - started))))
+            except subprocess.TimeoutExpired:
+                pass
         wall = time.monotonic() - started
         after, usage_after = cgroup_snapshot(scope), resource.getrusage(resource.RUSAGE_CHILDREN)
         observer_after = resource.getrusage(resource.RUSAGE_SELF)
