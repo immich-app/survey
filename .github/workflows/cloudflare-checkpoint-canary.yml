@@ -1,0 +1,24 @@
+name: Yucca native checkpoint canary
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-checkpoint-20261023
+
+permissions: {}
+
+jobs:
+  checkpoint:
+    name: checkpoint / lite
+    runs-on: yucca-cloudflare-lite
+    timeout-minutes: 5
+    steps:
+      - name: Record native identity and finish
+        shell: bash
+        run: |
+          printf 'YUCCA_CHECKPOINT_CANARY_STARTED utc=%s uid=%s gid=%s run_id=%s attempt=%s\n' \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(id -u)" "$(id -g)" \
+            "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          awk '/^(CapInh|CapPrm|CapEff|CapBnd|CapAmb|NoNewPrivs):/ { print "YUCCA_CHECKPOINT_IDENTITY " $0 }' /proc/self/status
+          sleep 3
+          printf 'YUCCA_CHECKPOINT_CANARY_FINISHED utc=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
