@@ -37,8 +37,6 @@ PRIVATE_PREFIX = "yucca-terraform-private-"
 STAGE_NAMES = {"init", "plan"}
 FAILURES = {"success", "success_changes", "timeout", "memory_limit", "killed", "secret_resolution", "authentication", "backend_read_only_or_missing", "network_or_backend_connection", "provider_download", "provider_startup", "configuration", "command_failed", "setup_failed", "postgres_configuration"}
 SQLSTATES = {"25006", "42P01", "3F000", "3D000", "28P01", "28000", "42501", "08001", "08006"}
-PUBLIC_PROVIDERS = {"cloudflare/cloudflare", "hashicorp/random", "hashicorp/null", "hashicorp/archive", "hashicorp/local", "hashicorp/http", "hashicorp/external", "hashicorp/time", "hashicorp/tls", "hashicorp/dns", "integrations/github", "builtin/terraform"}
-PROVIDER_REGISTRIES = {"registry.opentofu.org", "registry.terraform.io", "terraform.io"}
 RESOURCE_TYPES = {"cloudflare_pages_project", "cloudflare_pages_domain", "cloudflare_record", "cloudflare_dns_record", "cloudflare_worker", "cloudflare_worker_version", "cloudflare_workers_script", "cloudflare_workers_deployment", "cloudflare_workers_route", "cloudflare_d1_database", "cloudflare_r2_bucket", "cloudflare_workers_kv_namespace", "cloudflare_workers_custom_domain", "random_password", "null_resource", "terraform_data", "http"}
 DIAGNOSTIC_PATTERNS = {
     "init_dependency_lock_changed": r"provider dependency changes detected",
@@ -219,67 +217,6 @@ def execute(stage):
     os.execvpe("terragrunt", terraform_command(stage), environment)
 
 
-def provider_metadata(value):
-    result = {"providers": [], "registry_hosts": [], "unknown_provider_count": 0}
-    if not isinstance(value, dict) or not isinstance(value.get("providers"), list):
-        return result
-    for item in value["providers"][:32]:
-        match = re.fullmatch(r'(?:module\.[a-zA-Z0-9_.]+\.)?provider\["([a-z.]+)/([a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)"\](?:\.[a-zA-Z0-9_]+)?', item) if isinstance(item, str) else None
-        if match and match[1] in PROVIDER_REGISTRIES and match[2] in PUBLIC_PROVIDERS:
-            result["providers"].append(match[2])
-            result["registry_hosts"].append(match[1])
-        else:
-            result["unknown_provider_count"] += 1
-    result["providers"] = sorted(set(result["providers"]))
-    result["registry_hosts"] = sorted(set(result["registry_hosts"]))
-    if isinstance(value.get("version"), str) and re.fullmatch(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,3}", value["version"]):
-        result["state_version"] = value["version"]
-    return result
-
-
-def state_provider_metadata(environment):
-    result = {"available": True, "units": {}}
-    for unit, module in zip(["pages_project", "static_pages", "worker"], MODULES, strict=True):
-        command = ["terragrunt", "run", "providers", "--non-interactive", "--", "-no-color"]
-        with tempfile.TemporaryFile(mode="w+b") as output:
-            try:
-                value = subprocess.run(command, cwd=Path(module), env=environment, stdout=output, stderr=subprocess.STDOUT, timeout=45, check=False)
-            except subprocess.TimeoutExpired:
-                result["units"][unit] = {"return_code": 124}
-                continue
-            output.seek(0)
-            text = output.read(READ_LIMIT_BYTES).decode("utf-8", errors="replace")
-        addresses = re.findall(r'provider\[([a-z.]+/[a-zA-Z0-9_-]+/[a-zA-Z0-9_-]+)\]', text)
-        metadata = provider_metadata({"providers": ['provider["' + address + '"]' for address in addresses]})
-        result["units"][unit] = {"return_code": value.returncode, **metadata}
-    return result
-
-
-def project_state_metadata(value):
-    if not isinstance(value, dict) or not isinstance(value.get("available"), bool):
-        return {}
-    result = {"available": value["available"]}
-    if not isinstance(value.get("units"), dict):
-        return result
-    result["units"] = {}
-    for unit in ["pages_project", "static_pages", "worker"]:
-        source = value["units"].get(unit)
-        if not isinstance(source, dict):
-            continue
-        target = {}
-        for key, allowed in [("providers", PUBLIC_PROVIDERS), ("registry_hosts", PROVIDER_REGISTRIES)]:
-            if isinstance(source.get(key), list):
-                target[key] = sorted({item for item in source[key][:32] if isinstance(item, str) and item in allowed})
-        for key, minimum, maximum in [("return_code", -255, 255), ("unknown_provider_count", 0, 32)]:
-            number = source.get(key)
-            if type(number) is int and minimum <= number <= maximum:
-                target[key] = number
-        if isinstance(source.get("state_version"), str) and re.fullmatch(r"[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,3}", source["state_version"]):
-            target["state_version"] = source["state_version"]
-        result["units"][unit] = target
-    return result
-
-
 def classify(return_code, text, timed_out=False, oom_kills=0):
     if timed_out:
         return "timeout"
@@ -310,12 +247,6 @@ def diagnostic_codes(text):
     result["api_error_codes"] = sorted({int(value) for context in contexts for pair in re.findall(r'(?i)\bcode["\s:=]+([0-9]{1,5})\b|\(([0-9]{4,5})\)', context) for value in pair if value})
     result["error_resource_types"] = sorted({kind for context in contexts for kind in RESOURCE_TYPES if re.search(r'\bwith\s+[^\n]*\b' + re.escape(kind) + r'\.', context)})
     result["error_modules"] = sorted({module for line in text.splitlines() if re.search(r"\berror\b", line, flags=re.IGNORECASE) for module in MODULES if module in line})
-    for line in text.splitlines():
-        if line.startswith("YUCCA_TERRAFORM_STATE_METADATA_JSON "):
-            try:
-                result["state_provider_metadata"] = project_state_metadata(json.loads(line.split(" ", 1)[1]))
-            except ValueError:
-                pass
     return result
 
 
