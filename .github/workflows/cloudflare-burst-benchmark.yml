@@ -3,16 +3,15 @@ name: Yucca 200 native runner burst benchmark
 on:
   push:
     branches:
-      - ci/cloudflare-burst-20261022
+      - ci/cloudflare-burst-standard-3-20261023
   workflow_dispatch:
     inputs:
       shape:
-        description: Native small runner shape
+        description: Native runner shape
         required: true
         type: choice
         options:
-          - lite
-          - basic
+          - standard-3
 
 permissions: {}
 
@@ -22,8 +21,8 @@ concurrency:
 
 jobs:
   burst:
-    name: burst / ${{ inputs.shape || 'lite' }} / ${{ matrix.index }}
-    runs-on: ${{ format('yucca-cloudflare-{0}', inputs.shape || 'lite') }}
+    name: burst / ${{ inputs.shape || 'standard-3' }} / ${{ matrix.index }}
+    runs-on: ${{ format('yucca-cloudflare-{0}', inputs.shape || 'standard-3') }}
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -232,9 +231,9 @@ jobs:
           200,
         ]
     env:
-      BURST_SHAPE: ${{ inputs.shape || 'lite' }}
+      BURST_SHAPE: ${{ inputs.shape || 'standard-3' }}
       BURST_INDEX: ${{ matrix.index }}
-      BURST_TRIAL_ID: 6ff061d0-4558-4700-bf12-927c087d3f45
+      BURST_TRIAL_ID: ecfe12dc-be4c-45b2-b278-d284f9ccd89b
       BURST_BARRIER_URL: https://yucca-ci-burst-release-20261022.ian-b13.workers.dev/
     steps:
       - name: Record native readiness and hold until release
@@ -254,7 +253,7 @@ jobs:
           HTTP_TIMEOUT_SECONDS = 5
           MAX_FAILURES = 10
           MAX_BODY_BYTES = 1024
-          expected_trial = "6ff061d0-4558-4700-bf12-927c087d3f45"
+          expected_trial = "ecfe12dc-be4c-45b2-b278-d284f9ccd89b"
           expected_url = "https://yucca-ci-burst-release-20261022.ian-b13.workers.dev/"
           started = time.monotonic()
           common = {
@@ -298,7 +297,7 @@ jobs:
 
           if (os.environ["BURST_TRIAL_ID"] != expected_trial or
                   os.environ["BURST_BARRIER_URL"] != expected_url or
-                  common["shape"] not in {"lite", "basic"} or
+                  common["shape"] not in {"standard-3"} or
                   not 1 <= common["index"] <= 200):
               raise SystemExit("Burst configuration invalid")
           scope = cgroup_scope()
