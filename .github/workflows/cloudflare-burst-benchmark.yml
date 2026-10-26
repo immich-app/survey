@@ -236,7 +236,7 @@ jobs:
       BURST_TRIAL_ID: ecfe12dc-be4c-45b2-b278-d284f9ccd89b
     steps:
       # Keep the marker/step names compatible with the benchmark log collector.
-      # Each runner releases itself after 60 seconds; no shared barrier is used.
+      # Each runner releases itself after 180 seconds; no shared barrier is used.
       - name: Record native readiness and hold until release
         shell: bash
         run: |
@@ -247,7 +247,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
 
-          HOLD_SECONDS = 60
+          HOLD_SECONDS = 180
           expected_trial = "ecfe12dc-be4c-45b2-b278-d284f9ccd89b"
           common = {
               "schema": 1, "index": int(os.environ["BURST_INDEX"]),
