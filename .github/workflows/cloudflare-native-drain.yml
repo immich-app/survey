@@ -1,0 +1,47 @@
+name: Yucca native drain and connector recovery canary
+
+on:
+  push:
+    branches:
+      - ci/cloudflare-native-drain-20261026
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: yucca-native-drain-canary
+  cancel-in-progress: false
+
+jobs:
+  hold:
+    name: native drain / standard-3 / hold
+    runs-on: yucca-cloudflare-standard-3
+    timeout-minutes: 10
+    steps:
+      - name: Hold native job for busy-removal and connector-recovery checks
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          from datetime import datetime, timezone
+
+          HOLD_SECONDS = 240
+          identity = {
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "workflow_commit": os.environ["GITHUB_SHA"],
+              "hold_seconds": HOLD_SECONDS,
+          }
+
+          def emit(kind):
+              print("YUCCA_DRAIN_JSON " + json.dumps({
+                  **identity, "kind": kind,
+                  "utc": datetime.now(timezone.utc).isoformat(),
+              }, sort_keys=True), flush=True)
+
+          emit("ready")
+          time.sleep(HOLD_SECONDS)
+          emit("finished")
+          PY
