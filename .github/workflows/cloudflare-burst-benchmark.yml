@@ -237,6 +237,7 @@ jobs:
     steps:
       # Keep the marker/step names compatible with the benchmark log collector.
       # Each runner releases itself after 180 seconds; no shared barrier is used.
+      # Capture startup, simultaneous execution and automatic cleanup together.
       - name: Record native readiness and hold until release
         shell: bash
         run: |
