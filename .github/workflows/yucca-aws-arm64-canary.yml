@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - ci/aws-arm64-canary-20261028
+    paths:
+      - .github/workflows/yucca-aws-arm64-canary.yml
   workflow_dispatch:
 
 permissions:
