@@ -1,0 +1,229 @@
+name: Yucca AWS native ARM64 canary
+
+on:
+  push:
+    branches:
+      - ci/aws-arm64-canary-20261028
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-aws-arm64-canary-20261028
+  cancel-in-progress: false
+
+jobs:
+  native-arm64:
+    runs-on: yucca-aws-arm64-canary-20261028
+    timeout-minutes: 8
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Verify native GitHub job and ARM64 tools
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import platform
+          import re
+          from pathlib import Path
+
+          assert os.environ.get("GITHUB_ACTIONS") == "true"
+          assert os.environ.get("GITHUB_SERVER_URL") == "https://github.com"
+          assert os.environ.get("GITHUB_REPOSITORY") == "immich-app/survey"
+          assert os.environ.get("GITHUB_REF") == "refs/heads/ci/aws-arm64-canary-20261028"
+          assert re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ID", ""))
+          assert re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ATTEMPT", ""))
+          assert re.fullmatch(r"[a-f0-9]{40}", os.environ.get("GITHUB_SHA", ""))
+          assert os.environ.get("RUNNER_OS") == "Linux"
+          assert os.environ.get("RUNNER_ARCH") == "ARM64"
+          assert platform.machine() == "aarch64"
+          forbidden = (
+              "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+              "AWS_SECURITY_TOKEN", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+              "AWS_CONTAINER_CREDENTIALS_FULL_URI", "AWS_WEB_IDENTITY_TOKEN_FILE",
+              "CI_ALLOCATION_TOKEN", "GITHUB_APP_PRIVATE_KEY",
+          )
+          assert not any(key in os.environ for key in forbidden), "Controller credential reached job environment"
+          marker = {
+              "kind": "start",
+              "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "job": os.environ["GITHUB_JOB"],
+              "sha": os.environ["GITHUB_SHA"],
+              "runner_name": os.environ["RUNNER_NAME"],
+              "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+              "architecture": platform.machine(),
+          }
+          print("YUCCA_AWS_ARM64_CANARY_JSON " + json.dumps(marker, sort_keys=True), flush=True)
+          print("Native GitHub context and credential isolation verified", flush=True)
+          PY
+          test "$(uname -m)" = aarch64
+          node --version
+          test "$(node -p 'process.arch')" = arm64
+          python3 --version
+          cc --version
+          git --version
+
+      - name: Exercise native static code and Docker bridge without image pulls
+        run: |
+          set -euo pipefail
+          context=$(mktemp -d "$RUNNER_TEMP/aws-arm64-canary.XXXXXX")
+          network="ci-arm64-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          server="$network-server"
+          image="$network:local"
+          cleanup() {
+            docker rm -f "$server" >/dev/null 2>&1 || true
+            docker network rm "$network" >/dev/null 2>&1 || true
+            docker image rm -f "$image" >/dev/null 2>&1 || true
+            rm -rf "$context"
+          }
+          trap cleanup EXIT
+          cat > "$context/probe.c" <<'C'
+          #include <arpa/inet.h>
+          #include <errno.h>
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/socket.h>
+          #include <sys/time.h>
+          #include <unistd.h>
+          #if !defined(__aarch64__)
+          #error "Native ARM64 compiler required"
+          #endif
+
+          static int fail(const char *operation) {
+            perror(operation);
+            return 1;
+          }
+
+          static int serve(void) {
+            int listener = socket(AF_INET, SOCK_STREAM, 0);
+            if (listener < 0) return fail("socket");
+            int reuse = 1;
+            if (setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse))) return fail("setsockopt");
+            struct sockaddr_in address = {.sin_family = AF_INET, .sin_port = htons(8080), .sin_addr.s_addr = htonl(INADDR_ANY)};
+            if (bind(listener, (struct sockaddr *)&address, sizeof(address))) return fail("bind");
+            if (listen(listener, 4)) return fail("listen");
+            for (;;) {
+              int client = accept(listener, NULL, NULL);
+              if (client < 0) return fail("accept");
+              char request[1024];
+              ssize_t received = read(client, request, sizeof(request));
+              if (received > 0) {
+                const char response[] = "HTTP/1.1 200 OK\r\nContent-Length: 23\r\nConnection: close\r\n\r\nnative-arm64-bridge-ok\n";
+                if (write(client, response, sizeof(response) - 1) != (ssize_t)(sizeof(response) - 1)) return fail("write");
+              }
+              close(client);
+            }
+          }
+
+          static int query(const char *ip) {
+            struct sockaddr_in address = {.sin_family = AF_INET, .sin_port = htons(8080)};
+            if (inet_pton(AF_INET, ip, &address.sin_addr) != 1) return fail("inet_pton");
+            int client = -1;
+            for (int attempt = 0; attempt < 100; attempt++) {
+              client = socket(AF_INET, SOCK_STREAM, 0);
+              if (client < 0) return fail("socket");
+              struct timeval timeout = {.tv_sec = 5};
+              if (setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout))) return fail("setsockopt");
+              if (!connect(client, (struct sockaddr *)&address, sizeof(address))) break;
+              close(client);
+              client = -1;
+              usleep(50000);
+            }
+            if (client < 0) return fail("connect");
+            const char request[] = "GET / HTTP/1.1\r\nHost: native-arm64\r\nConnection: close\r\n\r\n";
+            if (write(client, request, sizeof(request) - 1) != (ssize_t)(sizeof(request) - 1)) return fail("write");
+            char response[4096] = {0};
+            size_t used = 0;
+            ssize_t received;
+            while ((received = read(client, response + used, sizeof(response) - used - 1)) > 0) {
+              used += (size_t)received;
+              if (used == sizeof(response) - 1) break;
+            }
+            close(client);
+            if (received < 0) return fail("read");
+            if (!strstr(response, "HTTP/1.1 200 OK") || !strstr(response, "\r\n\r\nnative-arm64-bridge-ok\n")) return 1;
+            puts("CI_ARM64_DOCKER_BRIDGE_OK");
+            return 0;
+          }
+
+          int main(int argc, char **argv) {
+            if (argc == 1 || (argc == 2 && !strcmp(argv[1], "selftest"))) { puts("CI_ARM64_NATIVE_OK"); return 0; }
+            if (argc == 2 && !strcmp(argv[1], "serve")) return serve();
+            if (argc == 3 && !strcmp(argv[1], "query")) return query(argv[2]);
+            return 2;
+          }
+          C
+          cc -static -std=c11 -D_DEFAULT_SOURCE -O2 -Wall -Wextra -Werror "$context/probe.c" -o "$context/probe"
+          "$context/probe"
+          python3 - "$context/probe" <<'PY'
+          import sys
+          from pathlib import Path
+          header = Path(sys.argv[1]).read_bytes()[:20]
+          assert header[:6] == b"\x7fELF\x02\x01" and header[18:20] == b"\xb7\x00", "AArch64 ELF required"
+          print("Compiled AArch64 ELF verified")
+          PY
+          test "$(docker info --format '{{.Driver}}')" = overlay2
+          cat > "$context/Dockerfile" <<'DOCKERFILE'
+          FROM scratch
+          COPY probe /probe
+          RUN ["/probe", "selftest"]
+          ENTRYPOINT ["/probe"]
+          DOCKERFILE
+          DOCKER_BUILDKIT=0 docker build --pull=false --network=none --no-cache -t "$image" "$context"
+          test "$(docker image inspect --format '{{.Architecture}}' "$image")" = arm64
+          docker run --rm --network=none "$image"
+          docker network create --driver bridge --internal "$network"
+          test "$(docker network inspect --format '{{.Driver}}' "$network")" = bridge
+          docker run -d --name "$server" --network "$network" "$image" serve
+          ip=$(docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$server")
+          test -n "$ip"
+          docker run --rm --network "$network" "$image" query "$ip"
+
+      - name: Hold native job for controller restart or cancellation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import platform
+          import signal
+          import sys
+          import time
+          from pathlib import Path
+
+          def marker(kind, **fields):
+              payload = {
+                  "kind": kind,
+                  "at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  "run_id": os.environ["GITHUB_RUN_ID"],
+                  "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "job": os.environ["GITHUB_JOB"],
+                  "sha": os.environ["GITHUB_SHA"],
+                  "runner_name": os.environ["RUNNER_NAME"],
+                  "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+                  "architecture": platform.machine(),
+                  **fields,
+              }
+              print("YUCCA_AWS_ARM64_CANARY_JSON " + json.dumps(payload, sort_keys=True), flush=True)
+
+          def cancelled(signum, _frame):
+              marker("cancelled", signal=signal.Signals(signum).name)
+              sys.exit(128 + signum)
+
+          signal.signal(signal.SIGTERM, cancelled)
+          signal.signal(signal.SIGINT, cancelled)
+          marker("hold_started", hold_seconds=180)
+          started = time.monotonic()
+          time.sleep(180)
+          marker("hold_finished", elapsed_seconds=round(time.monotonic() - started, 3))
+          marker("finished", status="success")
+          PY
