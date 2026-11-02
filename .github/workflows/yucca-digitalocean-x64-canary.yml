@@ -1,0 +1,214 @@
+name: Yucca DigitalOcean native x64 canary
+
+on:
+  push:
+    branches:
+      - ci/digitalocean-x64-canary-20261102
+    paths:
+      - .github/workflows/yucca-digitalocean-x64-canary.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yucca-digitalocean-x64-canary-20261102
+  cancel-in-progress: false
+
+jobs:
+  native-x64:
+    runs-on: yucca-digitalocean-x64-canary-20261102
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Verify native job identity, clean workspace and isolated credentials
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import platform
+          import re
+          import subprocess
+          from pathlib import Path
+
+          assert os.environ.get("GITHUB_ACTIONS") == "true"
+          assert os.environ.get("GITHUB_SERVER_URL") == "https://github.com"
+          assert os.environ.get("GITHUB_REPOSITORY") == "immich-app/survey"
+          assert os.environ.get("GITHUB_REF") == "refs/heads/ci/digitalocean-x64-canary-20261102"
+          assert re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ID", ""))
+          assert re.fullmatch(r"[1-9][0-9]*", os.environ.get("GITHUB_RUN_ATTEMPT", ""))
+          assert re.fullmatch(r"[a-f0-9]{40}", os.environ.get("GITHUB_SHA", ""))
+          assert os.environ.get("RUNNER_OS") == "Linux"
+          assert os.environ.get("RUNNER_ARCH") == "X64"
+          assert platform.machine() == "x86_64"
+          assert os.getuid() == os.geteuid() == os.getgid() == os.getegid() == 1000
+          status = dict(line.split(":", 1) for line in Path("/proc/self/status").read_text().splitlines() if ":" in line)
+          assert status["NoNewPrivs"].strip() == "1"
+          assert all(int(status[key].strip(), 16) == 0 for key in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"))
+          workspace = Path(os.environ["GITHUB_WORKSPACE"])
+          assert workspace.is_dir() and not list(workspace.iterdir()), "Workspace was not fresh"
+          forbidden = (
+              "DIGITALOCEAN_TOKEN", "DIGITALOCEAN_ACCESS_TOKEN", "DO_TOKEN",
+              "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+              "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+              "AWS_WEB_IDENTITY_TOKEN_FILE", "FLY_API_TOKEN", "SPRITES_TOKEN",
+              "CLOUDFLARE_API_TOKEN", "CF_API_TOKEN", "CI_ALLOCATION_TOKEN", "GITHUB_APP_PRIVATE_KEY",
+          )
+          assert not any(key in os.environ for key in forbidden), "Controller credential reached job"
+          node = subprocess.check_output(["node", "--version"], text=True, timeout=10).strip()
+          assert node.startswith("v24.")
+          assert subprocess.check_output(["node", "-p", "process.arch"], text=True, timeout=10).strip() == "x64"
+          git = subprocess.check_output(["git", "--version"], text=True, timeout=10).strip()
+          subprocess.run(["cc", "--version"], check=True, stdout=subprocess.DEVNULL, timeout=10)
+          print("DO_CANARY_JSON " + json.dumps({
+              "kind": "start", "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+              "job": os.environ["GITHUB_JOB"], "sha": os.environ["GITHUB_SHA"],
+              "runner_name": os.environ["RUNNER_NAME"], "architecture": platform.machine(),
+              "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+              "uid": os.getuid(), "gid": os.getgid(), "capabilities_zero": True,
+              "no_new_privileges": True, "workspace_empty": True,
+              "tools": {"node": node, "python": platform.python_version(), "git": git},
+          }, sort_keys=True), flush=True)
+          PY
+          docker buildx version
+          test "$(docker buildx inspect do-ci --format '{{.Driver}}')" = remote
+
+      - name: Build native image with remote BuildKit, cache export/import and a dummy secret
+        run: |
+          set -euo pipefail
+          work=$(mktemp -d "$RUNNER_TEMP/do-x64-canary.XXXXXX")
+          trap 'rm -rf "$work"' EXIT
+          mkdir "$work/context"
+          export DO_CANARY_WORK="$work"
+          python3 - <<'PY'
+          import json
+          import os
+          import urllib.request
+          from pathlib import Path
+          request = urllib.request.Request("https://registry.npmjs.org/is-number/7.0.0", headers={"User-Agent": "yucca-ci-do-canary/1"})
+          with urllib.request.urlopen(request, timeout=20) as response:
+              body = response.read(65537)
+              assert response.status == 200 and len(body) <= 65536
+          metadata = json.loads(body)
+          assert metadata["name"] == "is-number" and metadata["version"] == "7.0.0"
+          Path(os.environ["DO_CANARY_WORK"], "dummy-secret").write_text("DO_CANARY_DUMMY_" + os.environ["GITHUB_RUN_ID"] + "_" + os.environ["GITHUB_RUN_ATTEMPT"])
+          print("DO_CANARY_REGISTRY_METADATA_OK", flush=True)
+          PY
+          cat > "$work/context/probe.c" <<'C'
+          #include <stdio.h>
+          #include <stdlib.h>
+          #include <string.h>
+          #include <sys/stat.h>
+          #if !defined(__x86_64__)
+          #error "Native x86_64 compiler required"
+          #endif
+          int main(int argc, char **argv) {
+            if (argc != 2 || strcmp(argv[1], "build")) return 2;
+            char secret[256] = {0};
+            FILE *input = fopen("/run/secrets/ci_dummy", "r");
+            if (!input || !fgets(secret, sizeof(secret), input) || fclose(input)) return 3;
+            if (strncmp(secret, "DO_CANARY_DUMMY_", 16) || strlen(secret) < 20) return 4;
+            if (mkdir("/proof", 0755)) return 5;
+            FILE *output = fopen("/proof/native.txt", "w");
+            if (!output || fputs("DO_X64_NATIVE_IMAGE_OK\n", output) < 0 || fclose(output)) return 6;
+            output = fopen("/proof/secret-mounted.txt", "w");
+            if (!output || fputs("dummy-secret-mounted\n", output) < 0 || fclose(output)) return 7;
+            memset(secret, 0, sizeof(secret));
+            return 0;
+          }
+          C
+          cc -static -std=c11 -O2 -Wall -Wextra -Werror "$work/context/probe.c" -o "$work/context/probe"
+          cat > "$work/context/Dockerfile" <<'DOCKERFILE'
+          # syntax=docker/dockerfile:1
+          FROM scratch AS build
+          COPY probe /probe
+          RUN --mount=type=secret,id=ci_dummy,required=true ["/probe", "build"]
+          FROM scratch AS artifact
+          COPY --from=build /proof/ /proof/
+          COPY --from=build /probe /probe
+          DOCKERFILE
+          docker buildx --builder do-ci build --progress=plain --no-cache --platform=linux/amd64 \
+            --secret "id=ci_dummy,src=$work/dummy-secret" \
+            --cache-to "type=local,dest=$work/cache-export,mode=max" \
+            --output "type=oci,dest=$work/image.oci.tar" "$work/context"
+          test -s "$work/cache-export/index.json"
+          # This VM owns its builder; pruning makes the next build depend on exported cache.
+          docker buildx --builder do-ci prune --all --force
+          docker buildx --builder do-ci build --progress=plain --platform=linux/amd64 \
+            --secret "id=ci_dummy,src=$work/dummy-secret" \
+            --cache-from "type=local,src=$work/cache-export" \
+            --output "type=local,dest=$work/result" "$work/context" 2>&1 | tee "$work/cache-import.log"
+          grep -q 'CACHED' "$work/cache-import.log"
+          python3 - <<'PY'
+          import gzip
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+          import tarfile
+          from pathlib import Path
+          work = Path(os.environ["DO_CANARY_WORK"])
+          cache_log = (work / "cache-import.log").read_text()
+          cached_run_ids = re.findall(r"^(#\d+) \[build [^\]]+\] RUN .*ci_dummy", cache_log, re.MULTILINE)
+          assert cached_run_ids and any(f"{step} CACHED" in cache_log for step in cached_run_ids), "Image RUN did not use imported cache"
+          assert (work / "result/proof/native.txt").read_text() == "DO_X64_NATIVE_IMAGE_OK\n"
+          assert (work / "result/proof/secret-mounted.txt").read_text() == "dummy-secret-mounted\n"
+          probe = (work / "result/probe").read_bytes()
+          assert probe[:6] == b"\x7fELF\x02\x01" and probe[18:20] == b"\x3e\x00"
+          secret = (work / "dummy-secret").read_bytes()
+          scanned = 0
+          with tarfile.open(work / "image.oci.tar") as archive:
+              for member in archive:
+                  if not member.isfile():
+                      continue
+                  stream = archive.extractfile(member)
+                  assert stream is not None
+                  payload = stream.read()
+                  assert secret not in payload, "Dummy secret leaked into OCI content"
+                  if payload[:2] == b"\x1f\x8b":
+                      payload = gzip.decompress(payload)
+                  elif payload[:4] == b"\x28\xb5\x2f\xfd":
+                      payload = subprocess.check_output(["zstd", "-d", "--stdout"], input=payload, timeout=20)
+                  assert secret not in payload, "Dummy secret leaked into an image layer"
+                  scanned += 1
+          print("DO_CANARY_JSON " + json.dumps({"kind": "buildx_verified", "run_id": os.environ["GITHUB_RUN_ID"],
+              "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"], "runner_name": os.environ["RUNNER_NAME"],
+              "probe_sha256": hashlib.sha256(probe).hexdigest(), "oci_files_scanned": scanned,
+              "native_multistage": True, "external_cache_import": True, "dummy_secret_absent": True}, sort_keys=True), flush=True)
+          PY
+
+      - name: Hold native job for controller restart or cancellation
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import datetime
+          import json
+          import os
+          import signal
+          import sys
+          import time
+          from pathlib import Path
+          started = time.monotonic()
+          def emit(kind, **fields):
+              print("DO_CANARY_JSON " + json.dumps({"kind": kind,
+                  "utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                  "elapsed_seconds": round(time.monotonic() - started, 6),
+                  "run_id": os.environ["GITHUB_RUN_ID"], "run_attempt": os.environ["GITHUB_RUN_ATTEMPT"],
+                  "job": os.environ["GITHUB_JOB"], "runner_name": os.environ["RUNNER_NAME"],
+                  "boot_id": Path("/proc/sys/kernel/random/boot_id").read_text().strip(), **fields}, sort_keys=True), flush=True)
+          def cancelled(signum, _frame):
+              emit("cancelled", signal=signal.Signals(signum).name)
+              sys.exit(128 + signum)
+          signal.signal(signal.SIGTERM, cancelled)
+          signal.signal(signal.SIGINT, cancelled)
+          emit("hold_started", hold_seconds=180)
+          time.sleep(180)
+          emit("hold_finished")
+          emit("finished", status="success")
+          PY
