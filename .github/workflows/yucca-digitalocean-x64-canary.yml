@@ -76,7 +76,7 @@ jobs:
           }, sort_keys=True), flush=True)
           PY
           docker buildx version
-          test "$(docker buildx inspect do-ci --format '{{.Driver}}')" = remote
+          docker buildx inspect do-ci | grep -Eq '^Driver:[[:space:]]+remote$'
 
       - name: Build native image with remote BuildKit, cache export/import and a dummy secret
         run: |
