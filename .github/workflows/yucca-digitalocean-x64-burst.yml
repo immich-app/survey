@@ -227,7 +227,7 @@ jobs:
         ]
     env:
       BURST_INDEX: ${{ matrix.index }}
-      BURST_TRIAL_ID: 03937f0e-e7ce-4e68-a868-94b7a995997e
+      BURST_TRIAL_ID: f1a9599e-1c3c-441e-8063-c7a82e32a5be
       BURST_BARRIER_URL: https://yucca-ci-do-x64-release-20261102.ian-b13.workers.dev
     defaults:
       run:
@@ -250,7 +250,7 @@ jobs:
           from datetime import datetime, timezone
           from pathlib import Path
 
-          EXPECTED_TRIAL = "03937f0e-e7ce-4e68-a868-94b7a995997e"
+          EXPECTED_TRIAL = "f1a9599e-1c3c-441e-8063-c7a82e32a5be"
           EXPECTED_URL = "https://yucca-ci-do-x64-release-20261102.ian-b13.workers.dev"
           POLL_SECONDS = 3
           MAX_WAIT_SECONDS = 10 * 60
